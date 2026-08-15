@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: payments-postgres
+    environment:
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments
+      POSTGRES_DB: payments
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payments"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    container_name: payments-redis
+    ports:
+      - "6379:6379"
+
+  nats:
+    image: nats:2.11-alpine
+    container_name: payments-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+volumes:
+  pgdata:
