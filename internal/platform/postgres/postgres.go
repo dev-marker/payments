@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// NewPool creates a connection pool for the database at dsn, and checks that the
-// database is reachable before returning it.
-func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+// NewPool creates a connection pool of up to maxConns connections to the
+// database at dsn, and checks that the database is reachable before returning it.
+func NewPool(ctx context.Context, dsn string, maxConns int32) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: parse dsn: %w", err)
@@ -19,8 +19,8 @@ func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 
 	// Pool sizing: a few warm connections, and a hard cap well below
 	// Postgres's max_connections, so many replicas can share one server.
-	cfg.MinConns = 2
-	cfg.MaxConns = 10
+	cfg.MinConns = min(2, maxConns)
+	cfg.MaxConns = maxConns
 
 	// Recycle connections now and then, so load rebalances after a failover.
 	// The jitter stops every connection from reconnecting at the same moment.
