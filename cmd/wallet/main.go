@@ -15,6 +15,7 @@ import (
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/logging"
 	"github.com/fiston-user/payments/internal/platform/postgres"
+	"github.com/fiston-user/payments/internal/wallet"
 )
 
 // version is stamped at build time: go build -ldflags "-X main.version=v1.2.3".
@@ -58,6 +59,10 @@ func main() {
 		}
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ready"})
 	})
+
+	// The wallet API, and a JSON 404 for everything else.
+	svc := wallet.NewService(wallet.NewStore(pool))
+	wallet.NewHandler(svc).Register(mux)
 	mux.HandleFunc("/", httpx.NotFound)
 
 	srv := &http.Server{

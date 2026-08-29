@@ -27,10 +27,13 @@ func newStore(t *testing.T) *wallet.Store {
 	return wallet.NewStore(pool)
 }
 
-// newAccount opens a fresh USD account, so every test works on its own data.
+// newAccount opens a USD wallet for a new owner, so every test has its own data.
 func newAccount(t *testing.T, s *wallet.Store, name string, side wallet.Direction) uuid.UUID {
 	t.Helper()
+	owner := uuid.New()
 	acc, err := s.CreateAccount(t.Context(), wallet.NewAccount{
+		Kind:          wallet.KindWallet,
+		OwnerID:       &owner,
 		Name:          name,
 		Currency:      "USD",
 		NormalBalance: side,
