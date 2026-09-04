@@ -44,3 +44,21 @@ func (v *ValidationError) Error() string {
 	fields := slices.Sorted(maps.Keys(v.Fields))
 	return "invalid input: " + strings.Join(fields, ", ")
 }
+
+// RuleError means a request was valid, but breaks a business rule, like
+// spending more than a wallet holds. Code is a stable reason, like
+// insufficient_funds, that clients can branch on.
+type RuleError struct {
+	Code    string
+	Message string
+}
+
+// NewRule returns a RuleError. Declare one per rule as a package variable, and
+// wrap it to add detail: fmt.Errorf("wallet %s: %w", id, ErrInsufficientFunds).
+func NewRule(code, message string) *RuleError {
+	return &RuleError{Code: code, Message: message}
+}
+
+func (e *RuleError) Error() string {
+	return e.Message
+}

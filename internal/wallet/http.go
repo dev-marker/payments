@@ -27,6 +27,13 @@ type (
 		Amount        Money     `json:"amount"`
 		CreatedAt     time.Time `json:"created_at"`
 	}
+	transferResponse struct {
+		TransactionID uuid.UUID `json:"transaction_id"`
+		From          uuid.UUID `json:"from"`
+		To            uuid.UUID `json:"to"`
+		Amount        Money     `json:"amount"`
+		CreatedAt     time.Time `json:"created_at"`
+	}
 	entryResponse struct {
 		ID            int64     `json:"id"`
 		TransactionID uuid.UUID `json:"transaction_id"`
@@ -62,6 +69,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /v1/wallets/{id}/balance", httpx.HandlerFunc(h.getBalance))
 	mux.Handle("POST /v1/wallets/{id}/deposits", httpx.HandlerFunc(h.deposit))
 	mux.Handle("GET /v1/wallets/{id}/entries", httpx.HandlerFunc(h.listEntries))
+	mux.Handle("POST /v1/transfers", httpx.HandlerFunc(h.transfer))
 }
 
 // walletID reads the wallet ID from the URL. An ID that isn't a UUID can't
@@ -138,6 +146,31 @@ func (h *Handler) deposit(w http.ResponseWriter, r *http.Request) error {
 		WalletID:      id,
 		Amount:        amount,
 		CreatedAt:     tx.CreatedAt,
+	})
+	return nil
+}
+
+func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		From     string `json:"from"`
+		To       string `json:"to"`
+		Amount   int64  `json:"amount"`
+		Currency string `json:"currency"`
+	}
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	amount := Money{Amount: req.Amount, Currency: req.Currency}
+	tr, err := h.svc.Transfer(r.Context(), req.From, req.To, amount)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, r, http.StatusCreated, transferResponse{
+		TransactionID: tr.TransactionID,
+		From:          tr.From,
+		To:            tr.To,
+		Amount:        tr.Amount,
+		CreatedAt:     tr.CreatedAt,
 	})
 	return nil
 }

@@ -28,11 +28,14 @@ type errorDetail struct {
 func classify(err error) (int, string) {
 	var reqErr *requestError
 	var valErr *apperr.ValidationError
+	var ruleErr *apperr.RuleError
 	switch {
 	case errors.As(err, &reqErr):
 		return reqErr.status, reqErr.code
 	case errors.As(err, &valErr):
 		return http.StatusUnprocessableEntity, "invalid_input"
+	case errors.As(err, &ruleErr):
+		return http.StatusUnprocessableEntity, ruleErr.Code
 	case errors.Is(err, apperr.ErrNotFound):
 		return http.StatusNotFound, "not_found"
 	case errors.Is(err, apperr.ErrConflict):

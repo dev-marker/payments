@@ -192,3 +192,50 @@ func TestEntriesRejectsBadQueries(t *testing.T) {
 		})
 	}
 }
+
+func TestTransferEndpoint(t *testing.T) {
+	t.Parallel()
+	api := newAPI(t)
+	alice, bob, euros := createWallet(t, api, "USD"), createWallet(t, api, "USD"), createWallet(t, api, "EUR")
+	if rr := call(api, "POST", "/v1/wallets/"+alice+"/deposits", `{"amount": 1000, "currency": "USD"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("deposit: status %d: %s", rr.Code, rr.Body)
+	}
+
+	// The rows run in order: the second transfer needs the money the first one spent.
+	tests := []struct {
+		name     string
+		from, to string
+		amount   int64
+		currency string
+		status   int
+		code     string
+	}{
+		{"transferred", alice, bob, 600, "USD", 201, ""},
+		{"insufficient funds", alice, bob, 600, "USD", 422, "insufficient_funds"},
+		{"to the same wallet", alice, alice, 100, "USD", 422, "invalid_input"},
+		{"to another currency", alice, euros, 100, "USD", 422, "invalid_input"},
+		{"wrong currency", alice, bob, 100, "EUR", 422, "invalid_input"},
+		{"unknown wallet", alice, uuid.NewString(), 100, "USD", 422, "invalid_input"},
+		{"zero", alice, bob, 0, "USD", 422, "invalid_input"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"from": %q, "to": %q, "amount": %d, "currency": %q}`, tt.from, tt.to, tt.amount, tt.currency)
+			rr := call(api, "POST", "/v1/transfers", body)
+			if rr.Code != tt.status {
+				t.Fatalf("status = %d, want %d: %s", rr.Code, tt.status, rr.Body)
+			}
+			if got := decode[errorJSON](t, rr).Error.Code; got != tt.code {
+				t.Errorf("code = %q, want %q", got, tt.code)
+			}
+		})
+	}
+
+	// Six dollars moved, exactly once.
+	for id, want := range map[string]int64{alice: 400, bob: 600} {
+		rr := call(api, "GET", "/v1/wallets/"+id+"/balance", "")
+		if got := decode[balanceJSON](t, rr).Balance.Amount; got != want {
+			t.Errorf("balance of %s = %d, want %d", id, got, want)
+		}
+	}
+}

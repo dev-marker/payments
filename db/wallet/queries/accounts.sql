@@ -19,3 +19,10 @@ ORDER BY created_at;
 -- name: GetAccountBalance :one
 SELECT * FROM account_balances
 WHERE account_id = $1;
+
+-- name: LockAccount :one
+-- Locks an account's row until the end of the transaction. Anyone else who
+-- locks it waits until we commit or roll back.
+SELECT id FROM accounts
+WHERE id = $1
+FOR UPDATE;

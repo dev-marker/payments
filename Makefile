@@ -28,8 +28,11 @@ generate:
 WALLET_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/wallet?sslmode=disable
 export WALLET_TEST_DATABASE_URL
 
+# Run part of the suite with PKGS=./internal/wallet TESTFLAGS='-run Transfer'.
+PKGS ?= ./...
+
 test:
-	@go test -count=1 $(TESTFLAGS) ./...
+	@go test -count=1 $(TESTFLAGS) $(PKGS)
 
 .PHONY: run-wallet
 

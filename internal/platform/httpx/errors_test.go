@@ -36,6 +36,7 @@ func decodeError(t *testing.T, rr *httptest.ResponseRecorder) errorResponse {
 func TestError(t *testing.T) {
 	invalid := &apperr.ValidationError{}
 	invalid.Add("amount", "must be positive")
+	broke := apperr.NewRule("insufficient_funds", "insufficient funds")
 
 	tests := []struct {
 		name    string
@@ -47,6 +48,7 @@ func TestError(t *testing.T) {
 		{"not found", fmt.Errorf("account 42: %w", apperr.ErrNotFound), 404, "not_found", "account 42: not found"},
 		{"conflict", fmt.Errorf("wallet exists: %w", apperr.ErrConflict), 409, "conflict", "wallet exists: conflict"},
 		{"validation", invalid.Err(), 422, "invalid_input", "invalid input: amount"},
+		{"rule", fmt.Errorf("wallet 42: %w", broke), 422, "insufficient_funds", "wallet 42: insufficient funds"},
 		{"internal", errors.New("dial tcp 10.0.0.7:5432: refused"), 500, "internal", "internal server error"},
 	}
 	for _, tt := range tests {
