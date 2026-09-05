@@ -59,6 +59,12 @@ func badRequest(msg string) error {
 	return &requestError{http.StatusBadRequest, "bad_request", msg}
 }
 
+// NewError returns an error that Error sends with exactly this status and
+// code. It's for problems with the request itself, like a missing header.
+func NewError(status int, code, msg string) error {
+	return &requestError{status, code, msg}
+}
+
 // decodeError turns encoding/json's errors into messages a client can act on.
 func decodeError(err error) error {
 	var syntaxErr *json.SyntaxError

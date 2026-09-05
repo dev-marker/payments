@@ -11,6 +11,7 @@ import (
 
 	"github.com/fiston-user/payments/internal/platform/apperr"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // SettlementAccount names the system account that funds deposits: the money
@@ -42,6 +43,12 @@ type Service struct {
 // NewService returns a Service that keeps its data in store.
 func NewService(store *Store) *Service {
 	return &Service{store: store}
+}
+
+// WithTx returns a Service that does all its work inside tx, the caller's
+// database transaction. See Store.WithTx.
+func (s *Service) WithTx(tx pgx.Tx) *Service {
+	return &Service{store: s.store.WithTx(tx)}
 }
 
 // currencyCode matches the shape of an ISO 4217 code, like USD or EUR.

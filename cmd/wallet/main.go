@@ -13,8 +13,10 @@ import (
 
 	"github.com/fiston-user/payments/internal/platform/config"
 	"github.com/fiston-user/payments/internal/platform/httpx"
+	"github.com/fiston-user/payments/internal/platform/idempotency"
 	"github.com/fiston-user/payments/internal/platform/logging"
 	"github.com/fiston-user/payments/internal/platform/postgres"
+	"github.com/fiston-user/payments/internal/platform/redis"
 	"github.com/fiston-user/payments/internal/wallet"
 )
 
@@ -45,6 +47,19 @@ func main() {
 	}
 	logger.Info("connected to postgres", "max_conns", pool.Config().MaxConns)
 
+	// Redis is only a cache in front of Postgres. If it's down, we start
+	// anyway, without the cache, and use it as soon as it's back.
+	rdb, err := redis.NewClient(cfg.RedisURL)
+	if err != nil {
+		logger.Error("connect to redis", "err", err)
+		os.Exit(1)
+	}
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		logger.Warn("redis unreachable, idempotency keys use postgres only", "err", err)
+	} else {
+		logger.Info("connected to redis")
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ok"})
@@ -62,7 +77,8 @@ func main() {
 
 	// The wallet API, and a JSON 404 for everything else.
 	svc := wallet.NewService(wallet.NewStore(pool))
-	wallet.NewHandler(svc).Register(mux)
+	keys := idempotency.NewStore(pool, rdb)
+	wallet.NewHandler(svc, keys).Register(mux)
 	mux.HandleFunc("/", httpx.NotFound)
 
 	srv := &http.Server{
@@ -78,6 +94,9 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Forget expired idempotency keys, once an hour.
+	go keys.Cleanup(ctx, time.Hour)
 
 	go func() {
 		logger.Info("wallet service listening", "addr", srv.Addr)
@@ -100,5 +119,6 @@ func main() {
 
 	// Close the pool last: requests that were still finishing needed it.
 	pool.Close()
-	logger.Info("database pool closed")
+	rdb.Close()
+	logger.Info("database pool and redis client closed")
 }

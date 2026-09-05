@@ -33,7 +33,12 @@ type Transaction struct {
 // inTx runs fn inside a database transaction, handing it queries bound to that
 // transaction. It commits when fn returns nil, and rolls back otherwise. If the
 // transaction collides with another one, all of it runs again, fn included.
+// A Store from WithTx is already inside its caller's transaction: fn just
+// joins it.
 func (s *Store) inTx(ctx context.Context, fn func(q *walletdb.Queries) error) error {
+	if s.tx != nil {
+		return fn(s.q)
+	}
 	return postgres.Retry(ctx, func() error {
 		return s.tryTx(ctx, fn)
 	})

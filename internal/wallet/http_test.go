@@ -9,22 +9,35 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fiston-user/payments/internal/platform/idempotency"
 	"github.com/fiston-user/payments/internal/wallet"
 	"github.com/google/uuid"
 )
 
-// newAPI returns the wallet API on the test database, wired up like main does.
+// newAPI returns the wallet API on the test database, wired up like main does,
+// without the Redis cache: Postgres alone must get idempotency right.
 func newAPI(t *testing.T) http.Handler {
 	t.Helper()
+	pool := newPool(t)
+	svc := wallet.NewService(wallet.NewStore(pool))
 	mux := http.NewServeMux()
-	wallet.NewHandler(wallet.NewService(newStore(t))).Register(mux)
+	wallet.NewHandler(svc, idempotency.NewStore(pool, nil)).Register(mux)
 	return mux
 }
 
-// call sends one request to api, and returns the recorded response.
+// call sends one request to api, and returns the recorded response. Each call
+// has a fresh idempotency key, like a new request from a well-behaved client.
 func call(api http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	return callWithKey(api, method, path, uuid.NewString(), body)
+}
+
+// callWithKey sends a request with the idempotency key we pick: the same key
+// again is a retry.
+func callWithKey(api http.Handler, method, path, key, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set(idempotency.KeyHeader, key)
 	rr := httptest.NewRecorder()
-	api.ServeHTTP(rr, httptest.NewRequest(method, path, strings.NewReader(body)))
+	api.ServeHTTP(rr, req)
 	return rr
 }
 
@@ -233,6 +246,64 @@ func TestTransferEndpoint(t *testing.T) {
 
 	// Six dollars moved, exactly once.
 	for id, want := range map[string]int64{alice: 400, bob: 600} {
+		rr := call(api, "GET", "/v1/wallets/"+id+"/balance", "")
+		if got := decode[balanceJSON](t, rr).Balance.Amount; got != want {
+			t.Errorf("balance of %s = %d, want %d", id, got, want)
+		}
+	}
+}
+
+func TestTransferRetryStorm(t *testing.T) {
+	t.Parallel()
+	api := newAPI(t)
+	alice, bob := createWallet(t, api, "USD"), createWallet(t, api, "USD")
+	deposit := call(api, "POST", "/v1/wallets/"+alice+"/deposits", `{"amount": 1000, "currency": "USD"}`)
+	if deposit.Code != http.StatusCreated {
+		t.Fatalf("deposit: status %d: %s", deposit.Code, deposit.Body)
+	}
+
+	// One transfer, sent twenty times at once with the same key: a client that
+	// retries in a panic. Collect every response.
+	key := uuid.NewString()
+	body := fmt.Sprintf(`{"from": %q, "to": %q, "amount": 100, "currency": "USD"}`, alice, bob)
+	responses := make(chan *httptest.ResponseRecorder, 20)
+	concurrently(20, func() error {
+		responses <- callWithKey(api, "POST", "/v1/transfers", key, body)
+		return nil
+	})
+	close(responses)
+
+	// Exactly one ran. The rest were refused while it was running, or got its
+	// response replayed, byte for byte.
+	ran, replayed, refused := 0, 0, 0
+	bodies := make(map[string]bool)
+	for rr := range responses {
+		switch {
+		case rr.Code == http.StatusConflict:
+			refused++
+			continue
+		case rr.Code != http.StatusCreated:
+			t.Fatalf("status = %d: %s", rr.Code, rr.Body)
+		case rr.Header().Get(idempotency.ReplayedHeader) == "true":
+			replayed++
+		default:
+			ran++
+		}
+		bodies[rr.Body.String()] = true
+	}
+	t.Logf("%d ran, %d replayed, %d refused as in progress", ran, replayed, refused)
+	if ran != 1 || len(bodies) != 1 {
+		t.Errorf("%d requests ran, with %d different bodies; want exactly 1 of each", ran, len(bodies))
+	}
+
+	// Now that it's done, a retry gets the stored response.
+	rr := callWithKey(api, "POST", "/v1/transfers", key, body)
+	if rr.Header().Get(idempotency.ReplayedHeader) != "true" || !bodies[rr.Body.String()] {
+		t.Errorf("retry: status %d, not the stored response: %s", rr.Code, rr.Body)
+	}
+
+	// And the money moved once: one dollar, not twenty.
+	for id, want := range map[string]int64{alice: 900, bob: 100} {
 		rr := call(api, "GET", "/v1/wallets/"+id+"/balance", "")
 		if got := decode[balanceJSON](t, rr).Balance.Amount; got != want {
 			t.Errorf("balance of %s = %d, want %d", id, got, want)

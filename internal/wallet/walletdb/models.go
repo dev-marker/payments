@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AccountKind string
@@ -139,6 +140,19 @@ type Entry struct {
 	Amount        int64          `json:"amount"`
 	Currency      string         `json:"currency"`
 	CreatedAt     time.Time      `json:"created_at"`
+}
+
+type IdempotencyKey struct {
+	Scope        string             `json:"scope"`
+	Key          string             `json:"key"`
+	Fingerprint  []byte             `json:"fingerprint"`
+	Status       string             `json:"status"`
+	ResponseCode pgtype.Int4        `json:"response_code"`
+	ResponseBody []byte             `json:"response_body"`
+	CreatedAt    time.Time          `json:"created_at"`
+	LockedAt     time.Time          `json:"locked_at"`
+	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
+	ExpiresAt    time.Time          `json:"expires_at"`
 }
 
 type Transaction struct {

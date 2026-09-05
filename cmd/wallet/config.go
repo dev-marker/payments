@@ -17,6 +17,7 @@ type Config struct {
 	LogFormat       string
 	DatabaseURL     string
 	DBMaxConns      int
+	RedisURL        string
 }
 
 // loadConfig reads the configuration. Everything has a sensible default except
@@ -29,6 +30,7 @@ func loadConfig(env *config.Env) (Config, error) {
 		LogLevel:        config.Parse(env, "LOG_LEVEL", slog.LevelInfo, logging.ParseLevel),
 		DatabaseURL:     env.Required("WALLET_DATABASE_URL"),
 		DBMaxConns:      env.Int("WALLET_DB_MAX_CONNS", 10),
+		RedisURL:        env.String("WALLET_REDIS_URL", "redis://localhost:6379/0"),
 	}
 
 	// Text logs for humans in development, JSON for log collectors in production.
