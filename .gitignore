@@ -1,1 +1,3 @@
 bin/
+# Private keys and other secrets: never in git.
+secrets/

@@ -16,6 +16,9 @@ var (
 	// ErrConflict means the request clashes with the current state, such as
 	// creating something that already exists.
 	ErrConflict = errors.New("conflict")
+	// ErrUnauthenticated means the caller didn't prove who they are: a wrong
+	// password, or a token that's missing, invalid, expired or revoked.
+	ErrUnauthenticated = errors.New("unauthenticated")
 )
 
 // ValidationError reports which fields of a request are invalid, and why.
