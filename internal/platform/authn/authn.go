@@ -7,10 +7,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -93,8 +96,8 @@ type userIDKey struct{}
 // caller's ID from UserID.
 func (v *Verifier) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		scheme, token, _ := strings.Cut(r.Header.Get("Authorization"), " ")
-		if !strings.EqualFold(scheme, "Bearer") || token == "" {
+		token := bearer(r.Header.Get("Authorization"))
+		if token == "" {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			httpx.Error(w, r, ErrMissingToken)
 			return
@@ -107,10 +110,24 @@ func (v *Verifier) Require(next http.Handler) http.Handler {
 			httpx.Error(w, r, ErrInvalidToken)
 			return
 		}
-		ctx := context.WithValue(r.Context(), userIDKey{}, id)
-		ctx = logging.With(ctx, slog.String("user_id", id.String()))
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), id)))
 	})
+}
+
+// bearer returns the token in an Authorization value, "Bearer <token>", or "".
+func bearer(value string) string {
+	scheme, token, _ := strings.Cut(value, " ")
+	if !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return token
+}
+
+// withUser returns a copy of ctx that carries the caller's ID, for UserID,
+// and for every line logged with it.
+func withUser(ctx context.Context, id uuid.UUID) context.Context {
+	ctx = context.WithValue(ctx, userIDKey{}, id)
+	return logging.With(ctx, slog.String("user_id", id.String()))
 }
 
 // UserID returns the ID of the user who sent the request, as Require stored
@@ -118,4 +135,26 @@ func (v *Verifier) Require(next http.Handler) http.Handler {
 func UserID(ctx context.Context) (uuid.UUID, bool) {
 	id, ok := ctx.Value(userIDKey{}).(uuid.UUID)
 	return id, ok
+}
+
+// ReadPublicKey reads an Ed25519 public key from a PEM file, in the PKIX
+// format that openssl pkey -pubout writes.
+func ReadPublicKey(path string) (ed25519.PublicKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "PUBLIC KEY" {
+		return nil, fmt.Errorf("%s: no PEM public key", path)
+	}
+	key, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	ed, ok := key.(ed25519.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("%s: a %T, not an Ed25519 key", path, key)
+	}
+	return ed, nil
 }

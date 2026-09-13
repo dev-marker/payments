@@ -1,0 +1,10 @@
+# buf's configuration: where our contracts live, and the rules they follow.
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

@@ -5,19 +5,27 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
+	walletv1 "github.com/fiston-user/payments/gen/wallet/v1"
+	"github.com/fiston-user/payments/internal/platform/authn"
 	"github.com/fiston-user/payments/internal/platform/config"
+	"github.com/fiston-user/payments/internal/platform/grpcx"
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/idempotency"
 	"github.com/fiston-user/payments/internal/platform/logging"
 	"github.com/fiston-user/payments/internal/platform/postgres"
 	"github.com/fiston-user/payments/internal/platform/redis"
 	"github.com/fiston-user/payments/internal/wallet"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/reflection"
 )
 
 // version is stamped at build time: go build -ldflags "-X main.version=v1.2.3".
@@ -60,6 +68,15 @@ func main() {
 		logger.Info("connected to redis")
 	}
 
+	// The auth service's public key: enough to check access tokens, and
+	// useless for making them.
+	pub, err := authn.ReadPublicKey(cfg.PublicKeyFile)
+	if err != nil {
+		logger.Error("read auth public key", "err", err)
+		os.Exit(1)
+	}
+	verifier := authn.NewVerifier(pub)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ok"})
@@ -80,6 +97,19 @@ func main() {
 	keys := idempotency.NewStore(pool, rdb)
 	wallet.NewHandler(svc, keys).Register(mux)
 	mux.HandleFunc("/", httpx.NotFound)
+
+	// The same service, over gRPC, for our other services. Every RPC needs an
+	// access token, except health checks.
+	public := healthpb.Health_ServiceDesc.ServiceName
+	grpcSrv := grpcx.NewServer(logger, verifier.UnaryInterceptor(public))
+	walletv1.RegisterWalletServiceServer(grpcSrv, wallet.NewGRPCServer(svc, keys))
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(grpcSrv, healthSrv)
+	// Reflection lets tools like grpcurl discover our API. Handy in
+	// development; in production, the contract is the .proto file.
+	if cfg.Env == "development" {
+		reflection.Register(grpcSrv)
+	}
 
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
@@ -106,16 +136,37 @@ func main() {
 		}
 	}()
 
+	lis, err := net.Listen("tcp", cfg.GRPCAddr)
+	if err != nil {
+		logger.Error("grpc listen", "err", err)
+		os.Exit(1)
+	}
+	go func() {
+		logger.Info("grpc server listening", "addr", cfg.GRPCAddr)
+		if err := grpcSrv.Serve(lis); err != nil {
+			logger.Error("grpc server failed", "err", err)
+			os.Exit(1)
+		}
+	}()
+
 	<-ctx.Done()
 	logger.Info("shutting down gracefully")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("shutdown failed", "err", err)
-	}
-	logger.Info("server stopped")
+	// Health checks fail first, so load balancers stop sending us traffic.
+	// Then both servers drain at the same time, within one deadline.
+	healthSrv.Shutdown()
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			logger.Error("http shutdown failed", "err", err)
+		}
+	})
+	wg.Go(func() { grpcx.Shutdown(shutdownCtx, grpcSrv) })
+	wg.Wait()
+	logger.Info("servers stopped")
 
 	// Close the pool last: requests that were still finishing needed it.
 	pool.Close()

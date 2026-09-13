@@ -1,0 +1,16 @@
+# What buf generate makes from our .proto files, and where it puts it.
+version: v2
+# Delete gen/ first, so the code of a removed .proto file goes too.
+clean: true
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/fiston-user/payments/gen
+plugins:
+  - local: protoc-gen-go
+    out: gen
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: gen
+    opt: paths=source_relative

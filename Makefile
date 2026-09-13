@@ -20,9 +20,12 @@ migrate-new:
 
 .PHONY: generate test
 
-# Regenerate the Go code for every service's SQL queries.
+# Regenerate the Go code for every service's SQL queries, and for our
+# protobuf contracts, as long as they pass buf's lint rules.
 generate:
 	@sqlc generate
+	@buf lint
+	@buf generate
 
 # Integration tests use the local Docker Postgres. Without this URL they skip.
 WALLET_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/wallet?sslmode=disable
@@ -42,7 +45,8 @@ VERSION ?= $(shell git describe --always --dirty)
 
 run-wallet:
 	@go build -ldflags "-X main.version=$(VERSION)" -o bin/wallet ./cmd/wallet
-	@WALLET_DATABASE_URL="$(DB_URL)" ./bin/wallet
+	@WALLET_DATABASE_URL="$(DB_URL)" \
+		WALLET_AUTH_PUBLIC_KEY_FILE=secrets/auth_ed25519.pub.pem ./bin/wallet
 
 run-auth:
 	@go build -ldflags "-X main.version=$(VERSION)" -o bin/auth ./cmd/auth

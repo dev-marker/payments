@@ -20,15 +20,21 @@ type requestIDKey struct{}
 // the client in the response header.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get(RequestIDHeader)
-		if !validRequestID(id) {
-			id = rand.Text()
-		}
-		ctx := context.WithValue(r.Context(), requestIDKey{}, id)
-		ctx = logging.With(ctx, slog.String("request_id", id))
+		ctx, id := WithRequestID(r.Context(), r.Header.Get(RequestIDHeader))
 		w.Header().Set(RequestIDHeader, id)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// WithRequestID returns a copy of ctx that carries a request ID, and the ID:
+// id if it's valid, or a new one. Other transports, like gRPC, use it too, so
+// a request keeps its ID wherever it goes.
+func WithRequestID(ctx context.Context, id string) (context.Context, string) {
+	if !validRequestID(id) {
+		id = rand.Text()
+	}
+	ctx = context.WithValue(ctx, requestIDKey{}, id)
+	return logging.With(ctx, slog.String("request_id", id)), id
 }
 
 // RequestIDFrom returns the ID of the request that ctx belongs to, or "".

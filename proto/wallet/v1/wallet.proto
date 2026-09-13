@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+// Version 1 of the wallet's API. A breaking change means a new package,
+// wallet.v2, served next to this one until every client has moved.
+package wallet.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// WalletService is the wallet's API for our other services. Clients outside
+// the cluster use the REST API, through the gateway.
+service WalletService {
+  // GetWallet returns a wallet.
+  rpc GetWallet(GetWalletRequest) returns (GetWalletResponse);
+  // GetBalance returns a wallet's balance, derived from its ledger entries.
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+  // Transfer moves money between two wallets in the same currency. It runs
+  // once per idempotency key: a retry with the same key returns the first
+  // response, and moves nothing.
+  rpc Transfer(TransferRequest) returns (TransferResponse);
+}
+
+// Money is an amount in minor units of a currency, like cents. Never a float.
+message Money {
+  // 1050 is 10.50 USD.
+  int64 amount_minor = 1;
+  // An ISO 4217 code, like USD.
+  string currency = 2;
+}
+
+// Wallet is a customer's account, in one currency.
+message Wallet {
+  string id = 1;
+  string owner_id = 2;
+  string currency = 3;
+  google.protobuf.Timestamp create_time = 4;
+}
+
+message GetWalletRequest {
+  string wallet_id = 1;
+}
+
+message GetWalletResponse {
+  Wallet wallet = 1;
+}
+
+message GetBalanceRequest {
+  string wallet_id = 1;
+}
+
+message GetBalanceResponse {
+  string wallet_id = 1;
+  Money balance = 2;
+}
+
+message TransferRequest {
+  // Chosen by the caller, unique per transfer: 1 to 255 characters. Send the
+  // same key again to retry safely.
+  string idempotency_key = 1;
+  string from_wallet_id = 2;
+  string to_wallet_id = 3;
+  Money amount = 4;
+}
+
+message TransferResponse {
+  string transaction_id = 1;
+  string from_wallet_id = 2;
+  string to_wallet_id = 3;
+  Money amount = 4;
+  google.protobuf.Timestamp create_time = 5;
+}
