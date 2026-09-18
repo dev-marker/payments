@@ -30,7 +30,9 @@ generate:
 # Integration tests use the local Docker Postgres. Without this URL they skip.
 WALLET_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/wallet?sslmode=disable
 AUTH_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/auth?sslmode=disable
-export WALLET_TEST_DATABASE_URL AUTH_TEST_DATABASE_URL
+# Redis database 1, so tests never touch the services' data in database 0.
+REDIS_TEST_URL ?= redis://localhost:6379/1
+export WALLET_TEST_DATABASE_URL AUTH_TEST_DATABASE_URL REDIS_TEST_URL
 
 # Run part of the suite with PKGS=./internal/wallet TESTFLAGS='-run Transfer'.
 PKGS ?= ./...
@@ -38,7 +40,7 @@ PKGS ?= ./...
 test:
 	@go test -count=1 $(TESTFLAGS) $(PKGS)
 
-.PHONY: run-wallet run-auth keys
+.PHONY: run-wallet run-auth run-gateway keys
 
 # Run the wallet service against the local database, stamped with a git version.
 VERSION ?= $(shell git describe --always --dirty)
@@ -52,6 +54,11 @@ run-auth:
 	@go build -ldflags "-X main.version=$(VERSION)" -o bin/auth ./cmd/auth
 	@AUTH_DATABASE_URL="postgres://payments:payments@localhost:5432/auth?sslmode=disable" \
 		AUTH_PRIVATE_KEY_FILE=secrets/auth_ed25519.pem ./bin/auth
+
+# The public API on port 8080, in front of the other two.
+run-gateway:
+	@go build -ldflags "-X main.version=$(VERSION)" -o bin/gateway ./cmd/gateway
+	@GATEWAY_AUTH_PUBLIC_KEY_FILE=secrets/auth_ed25519.pub.pem ./bin/gateway
 
 # A new Ed25519 key pair for signing access tokens, readable only by you. The
 # auth service gets the private key, every other service the public one.

@@ -33,7 +33,10 @@ const serviceConfig = `{
 			"retryableStatusCodes": ["UNAVAILABLE"]
 		}
 	}, {
-		"name": [{"service": "wallet.v1.WalletService", "method": "Transfer"}],
+		"name": [
+			{"service": "wallet.v1.WalletService", "method": "Deposit"},
+			{"service": "wallet.v1.WalletService", "method": "Transfer"}
+		],
 		"retryPolicy": {
 			"maxAttempts": 3,
 			"initialBackoff": "0.2s",

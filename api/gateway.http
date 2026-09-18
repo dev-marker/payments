@@ -1,0 +1,91 @@
+# The payments API through the gateway. Send the requests in order.
+@baseUrl = http://localhost:8080
+@password = correct horse battery staple
+@token = {{login.response.body.access_token}}
+@walletId = {{wallet.response.body.id}}
+
+### Register
+POST {{baseUrl}}/v1/auth/register
+Content-Type: application/json
+
+{"email": "alice@example.com", "password": "{{password}}"}
+
+### Log in
+# @name login
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{"email": "alice@example.com", "password": "{{password}}"}
+
+### Open a wallet
+# @name wallet
+POST {{baseUrl}}/v1/wallets
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"currency": "USD"}
+
+### Deposit fifty dollars
+POST {{baseUrl}}/v1/wallets/{{walletId}}/deposits
+Authorization: Bearer {{token}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"amount": 5000, "currency": "USD"}
+
+### Bob, so Alice has someone to pay
+POST {{baseUrl}}/v1/auth/register
+Content-Type: application/json
+
+{"email": "bob@example.com", "password": "{{password}}"}
+
+###
+# @name bob
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{"email": "bob@example.com", "password": "{{password}}"}
+
+###
+# @name bobsWallet
+POST {{baseUrl}}/v1/wallets
+Authorization: Bearer {{bob.response.body.access_token}}
+Content-Type: application/json
+
+{"currency": "USD"}
+
+### Pay Bob fifteen dollars
+POST {{baseUrl}}/v1/transfers
+Authorization: Bearer {{token}}
+Idempotency-Key: {{$guid}}
+X-Request-ID: alice-pays-bob
+Content-Type: application/json
+
+{
+  "from": "{{walletId}}",
+  "to": "{{bobsWallet.response.body.id}}",
+  "amount": 1500,
+  "currency": "USD"
+}
+
+### Balance
+GET {{baseUrl}}/v1/wallets/{{walletId}}/balance
+Authorization: Bearer {{token}}
+
+### Without a token
+GET {{baseUrl}}/v1/wallets/{{walletId}}/balance
+
+### Bob's wallet, with Alice's token
+GET {{baseUrl}}/v1/wallets/{{bobsWallet.response.body.id}}/balance
+Authorization: Bearer {{token}}
+
+### CORS preflight, from a browser app
+OPTIONS {{baseUrl}}/v1/transfers
+Origin: http://localhost:5173
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: authorization, content-type, idempotency-key
+
+### The same, from an origin we don't know
+OPTIONS {{baseUrl}}/v1/transfers
+Origin: https://evil.example
+Access-Control-Request-Method: POST

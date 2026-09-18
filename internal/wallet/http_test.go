@@ -1,6 +1,7 @@
 package wallet_test
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,21 +9,43 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/fiston-user/payments/internal/auth"
+	"github.com/fiston-user/payments/internal/platform/authn"
 	"github.com/fiston-user/payments/internal/platform/idempotency"
 	"github.com/fiston-user/payments/internal/wallet"
 	"github.com/google/uuid"
 )
 
-// newAPI returns the wallet API on the test database, wired up like main does,
+// testAPI is the wallet API on the test database, behind authn.Require, and
 // without the Redis cache: Postgres alone must get idempotency right.
-func newAPI(t *testing.T) http.Handler {
+type testAPI struct {
+	api    http.Handler
+	signer *auth.Signer
+}
+
+func newAPI(t *testing.T) testAPI {
 	t.Helper()
 	pool := newPool(t)
 	svc := wallet.NewService(wallet.NewStore(pool))
 	mux := http.NewServeMux()
 	wallet.NewHandler(svc, idempotency.NewStore(pool, nil)).Register(mux)
-	return mux
+	pub, key, _ := ed25519.GenerateKey(nil)
+	return testAPI{authn.NewVerifier(pub).Require(mux), auth.NewSigner(key, time.Minute)}
+}
+
+// user returns the API as a new user sees it, with their access token.
+func (a testAPI) user(t *testing.T) http.Handler {
+	t.Helper()
+	token, err := a.signer.Issue(uuid.New(), time.Now())
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Set("Authorization", "Bearer "+token)
+		a.api.ServeHTTP(w, r)
+	})
 }
 
 // call sends one request to api, and returns the recorded response. Each call
@@ -72,14 +95,14 @@ type (
 	}
 )
 
-func walletBody(owner, currency string) string {
-	return fmt.Sprintf(`{"owner_id": %q, "currency": %q}`, owner, currency)
+func walletBody(currency string) string {
+	return fmt.Sprintf(`{"currency": %q}`, currency)
 }
 
-// createWallet opens a wallet for a new owner, and returns its ID.
+// createWallet opens a wallet for the user, and returns its ID.
 func createWallet(t *testing.T, api http.Handler, currency string) string {
 	t.Helper()
-	rr := call(api, "POST", "/v1/wallets", walletBody(uuid.NewString(), currency))
+	rr := call(api, "POST", "/v1/wallets", walletBody(currency))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create wallet: status %d: %s", rr.Code, rr.Body)
 	}
@@ -88,8 +111,7 @@ func createWallet(t *testing.T, api http.Handler, currency string) string {
 
 func TestCreateWallet(t *testing.T) {
 	t.Parallel()
-	api := newAPI(t)
-	owner := uuid.NewString()
+	api := newAPI(t).user(t)
 
 	// The rows run in order: the duplicate needs the wallet from the first.
 	tests := []struct {
@@ -98,12 +120,12 @@ func TestCreateWallet(t *testing.T) {
 		status int
 		code   string
 	}{
-		{"created", walletBody(owner, "USD"), 201, ""},
-		{"one per currency", walletBody(owner, "USD"), 409, "conflict"},
-		{"another currency", walletBody(owner, "JPY"), 201, ""},
-		{"lowercase currency", walletBody(owner, "usd"), 422, "invalid_input"},
-		{"unsupported currency", walletBody(owner, "XYZ"), 422, "invalid_input"},
-		{"owner not a UUID", walletBody("alice", "USD"), 422, "invalid_input"},
+		{"created", walletBody("USD"), 201, ""},
+		{"one per currency", walletBody("USD"), 409, "conflict"},
+		{"another currency", walletBody("JPY"), 201, ""},
+		{"lowercase currency", walletBody("usd"), 422, "invalid_input"},
+		{"unsupported currency", walletBody("XYZ"), 422, "invalid_input"},
+		{"owner in the body", `{"owner_id": "alice", "currency": "EUR"}`, 400, "bad_request"},
 		{"unknown field", `{"currency": "USD", "balance": 100}`, 400, "bad_request"},
 	}
 	for _, tt := range tests {
@@ -122,8 +144,9 @@ func TestCreateWallet(t *testing.T) {
 
 func TestDeposit(t *testing.T) {
 	t.Parallel()
-	api := newAPI(t)
-	id := createWallet(t, api, "USD")
+	env := newAPI(t)
+	api := env.user(t)
+	id, theirs := createWallet(t, api, "USD"), createWallet(t, env.user(t), "USD")
 
 	tests := []struct {
 		name   string
@@ -140,6 +163,7 @@ func TestDeposit(t *testing.T) {
 		{"amount as a string", id, `{"amount": "2500", "currency": "USD"}`, 400},
 		{"unknown wallet", uuid.NewString(), `{"amount": 2500, "currency": "USD"}`, 404},
 		{"malformed wallet ID", "42", `{"amount": 2500, "currency": "USD"}`, 404},
+		{"someone else's wallet", theirs, `{"amount": 2500, "currency": "USD"}`, 404},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -159,7 +183,7 @@ func TestDeposit(t *testing.T) {
 
 func TestEntriesPagination(t *testing.T) {
 	t.Parallel()
-	api := newAPI(t)
+	api := newAPI(t).user(t)
 	id := createWallet(t, api, "EUR")
 	for _, amount := range []int{100, 200, 300} {
 		body := fmt.Sprintf(`{"amount": %d, "currency": "EUR"}`, amount)
@@ -193,7 +217,7 @@ func TestEntriesPagination(t *testing.T) {
 
 func TestEntriesRejectsBadQueries(t *testing.T) {
 	t.Parallel()
-	api := newAPI(t)
+	api := newAPI(t).user(t)
 	id := createWallet(t, api, "USD")
 
 	for _, query := range []string{"limit=0", "limit=101", "limit=ten", "cursor=not-a-cursor"} {
@@ -208,8 +232,10 @@ func TestEntriesRejectsBadQueries(t *testing.T) {
 
 func TestTransferEndpoint(t *testing.T) {
 	t.Parallel()
-	api := newAPI(t)
-	alice, bob, euros := createWallet(t, api, "USD"), createWallet(t, api, "USD"), createWallet(t, api, "EUR")
+	env := newAPI(t)
+	api, bobs := env.user(t), env.user(t)
+	alice, euros := createWallet(t, api, "USD"), createWallet(t, api, "EUR")
+	bob := createWallet(t, bobs, "USD")
 	if rr := call(api, "POST", "/v1/wallets/"+alice+"/deposits", `{"amount": 1000, "currency": "USD"}`); rr.Code != http.StatusCreated {
 		t.Fatalf("deposit: status %d: %s", rr.Code, rr.Body)
 	}
@@ -229,6 +255,7 @@ func TestTransferEndpoint(t *testing.T) {
 		{"to another currency", alice, euros, 100, "USD", 422, "invalid_input"},
 		{"wrong currency", alice, bob, 100, "EUR", 422, "invalid_input"},
 		{"unknown wallet", alice, uuid.NewString(), 100, "USD", 422, "invalid_input"},
+		{"from someone else's wallet", bob, alice, 100, "USD", 422, "invalid_input"},
 		{"zero", alice, bob, 0, "USD", 422, "invalid_input"},
 	}
 	for _, tt := range tests {
@@ -245,18 +272,24 @@ func TestTransferEndpoint(t *testing.T) {
 	}
 
 	// Six dollars moved, exactly once.
-	for id, want := range map[string]int64{alice: 400, bob: 600} {
-		rr := call(api, "GET", "/v1/wallets/"+id+"/balance", "")
-		if got := decode[balanceJSON](t, rr).Balance.Amount; got != want {
-			t.Errorf("balance of %s = %d, want %d", id, got, want)
-		}
+	expectBalance(t, api, alice, 400)
+	expectBalance(t, bobs, bob, 600)
+}
+
+// expectBalance checks a wallet's balance, as its owner sees it.
+func expectBalance(t *testing.T, api http.Handler, id string, want int64) {
+	t.Helper()
+	rr := call(api, "GET", "/v1/wallets/"+id+"/balance", "")
+	if got := decode[balanceJSON](t, rr).Balance.Amount; got != want {
+		t.Errorf("balance of %s = %d, want %d", id, got, want)
 	}
 }
 
 func TestTransferRetryStorm(t *testing.T) {
 	t.Parallel()
-	api := newAPI(t)
-	alice, bob := createWallet(t, api, "USD"), createWallet(t, api, "USD")
+	env := newAPI(t)
+	api, bobs := env.user(t), env.user(t)
+	alice, bob := createWallet(t, api, "USD"), createWallet(t, bobs, "USD")
 	deposit := call(api, "POST", "/v1/wallets/"+alice+"/deposits", `{"amount": 1000, "currency": "USD"}`)
 	if deposit.Code != http.StatusCreated {
 		t.Fatalf("deposit: status %d: %s", deposit.Code, deposit.Body)
@@ -303,10 +336,6 @@ func TestTransferRetryStorm(t *testing.T) {
 	}
 
 	// And the money moved once: one dollar, not twenty.
-	for id, want := range map[string]int64{alice: 900, bob: 100} {
-		rr := call(api, "GET", "/v1/wallets/"+id+"/balance", "")
-		if got := decode[balanceJSON](t, rr).Balance.Amount; got != want {
-			t.Errorf("balance of %s = %d, want %d", id, got, want)
-		}
-	}
+	expectBalance(t, api, alice, 900)
+	expectBalance(t, bobs, bob, 100)
 }

@@ -92,10 +92,14 @@ func main() {
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ready"})
 	})
 
-	// The wallet API, and a JSON 404 for everything else.
+	// The wallet API, where every route needs an access token, and a JSON 404
+	// for everything else.
 	svc := wallet.NewService(wallet.NewStore(pool))
 	keys := idempotency.NewStore(pool, rdb)
-	wallet.NewHandler(svc, keys).Register(mux)
+	api := http.NewServeMux()
+	wallet.NewHandler(svc, keys).Register(api)
+	api.HandleFunc("/", httpx.NotFound)
+	mux.Handle("/v1/", verifier.Require(api))
 	mux.HandleFunc("/", httpx.NotFound)
 
 	// The same service, over gRPC, for our other services. Every RPC needs an

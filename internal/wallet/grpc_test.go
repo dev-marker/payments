@@ -71,10 +71,14 @@ func newGRPC(t *testing.T) grpcEnv {
 	return grpcEnv{svc, client, healthpb.NewHealthClient(conn), auth.NewSigner(key, time.Minute)}
 }
 
-// as returns a context that sends an access token for a new user.
-func (e grpcEnv) as(t *testing.T) context.Context {
+// as returns a context that sends an access token for the owner of a wallet.
+func (e grpcEnv) as(t *testing.T, wallet uuid.UUID) context.Context {
 	t.Helper()
-	token, err := e.signer.Issue(uuid.New(), time.Now())
+	w, err := e.svc.Wallet(t.Context(), wallet)
+	if err != nil {
+		t.Fatalf("wallet: %v", err)
+	}
+	token, err := e.signer.Issue(*w.OwnerID, time.Now())
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
@@ -84,7 +88,7 @@ func (e grpcEnv) as(t *testing.T) context.Context {
 func TestGRPCAuth(t *testing.T) {
 	t.Parallel()
 	env := newGRPC(t)
-	id := newWallet(t, env.svc, 0).String()
+	mine, theirs := newWallet(t, env.svc, 0), newWallet(t, env.svc, 0)
 
 	tests := []struct {
 		name string
@@ -93,11 +97,12 @@ func TestGRPCAuth(t *testing.T) {
 	}{
 		{"no token", t.Context(), codes.Unauthenticated},
 		{"not a token", authn.WithToken(t.Context(), "hello"), codes.Unauthenticated},
-		{"valid token", env.as(t), codes.OK},
+		{"valid token", env.as(t, mine), codes.OK},
+		{"someone else's wallet", env.as(t, theirs), codes.NotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := env.client.GetBalance(tt.ctx, &walletv1.GetBalanceRequest{WalletId: id})
+			_, err := env.client.GetBalance(tt.ctx, &walletv1.GetBalanceRequest{WalletId: mine.String()})
 			if got := status.Code(err); got != tt.code {
 				t.Errorf("code = %s, want %s (%v)", got, tt.code, err)
 			}
@@ -114,8 +119,8 @@ func TestGRPCAuth(t *testing.T) {
 func TestGRPCErrors(t *testing.T) {
 	t.Parallel()
 	env := newGRPC(t)
-	ctx := env.as(t)
-	from, to := newWallet(t, env.svc, 1000).String(), newWallet(t, env.svc, 0).String()
+	alice, bob := newWallet(t, env.svc, 1000), newWallet(t, env.svc, 0)
+	ctx, from, to := env.as(t, alice), alice.String(), bob.String()
 	transfer := func(key string, amount int64) *walletv1.TransferRequest {
 		return &walletv1.TransferRequest{IdempotencyKey: key, FromWalletId: from, ToWalletId: to,
 			Amount: &walletv1.Money{AmountMinor: amount, Currency: "USD"}}

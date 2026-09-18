@@ -38,6 +38,7 @@ type Money struct {
 // HTTP, so every way into the service gets the same rules.
 type Service struct {
 	store *Store
+	user  *uuid.UUID // set by As: the one owner whose wallets we see
 }
 
 // NewService returns a Service that keeps its data in store.
@@ -48,7 +49,13 @@ func NewService(store *Store) *Service {
 // WithTx returns a Service that does all its work inside tx, the caller's
 // database transaction. See Store.WithTx.
 func (s *Service) WithTx(tx pgx.Tx) *Service {
-	return &Service{store: s.store.WithTx(tx)}
+	return &Service{store: s.store.WithTx(tx), user: s.user}
+}
+
+// As returns a Service that acts for a user: it only sees their wallets. The
+// Service without a user sees everything, for our own code, like tests.
+func (s *Service) As(user uuid.UUID) *Service {
+	return &Service{store: s.store, user: &user}
 }
 
 // currencyCode matches the shape of an ISO 4217 code, like USD or EUR.
@@ -95,11 +102,20 @@ func (s *Service) CreateWallet(ctx context.Context, ownerID, currency string) (A
 // Wallet returns the wallet with the given ID.
 func (s *Service) Wallet(ctx context.Context, id uuid.UUID) (Account, error) {
 	acc, err := s.store.Account(ctx, id)
-	if errors.Is(err, ErrAccountNotFound) || (err == nil && acc.Kind != KindWallet) {
-		// System accounts are ours: to a client, they don't exist.
+	if errors.Is(err, ErrAccountNotFound) || (err == nil && !s.sees(acc)) {
+		// System accounts are ours, and other people's wallets are theirs: to
+		// this caller, they don't exist.
 		return Account{}, ErrWalletNotFound
 	}
 	return acc, err
+}
+
+// sees reports whether acc is a wallet this Service may see.
+func (s *Service) sees(acc Account) bool {
+	if acc.Kind != KindWallet {
+		return false
+	}
+	return s.user == nil || (acc.OwnerID != nil && *acc.OwnerID == *s.user)
 }
 
 // Balance returns a wallet's balance, derived from its entries.
@@ -173,7 +189,8 @@ func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount Mone
 	if err != nil {
 		return Transfer{}, err
 	}
-	to, err := s.walletField(ctx, &v, "to", toID)
+	// Money can go to anyone's wallet: look the receiver up without a user.
+	to, err := (&Service{store: s.store}).walletField(ctx, &v, "to", toID)
 	if err != nil {
 		return Transfer{}, err
 	}

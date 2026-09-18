@@ -22,9 +22,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	WalletService_GetWallet_FullMethodName  = "/wallet.v1.WalletService/GetWallet"
-	WalletService_GetBalance_FullMethodName = "/wallet.v1.WalletService/GetBalance"
-	WalletService_Transfer_FullMethodName   = "/wallet.v1.WalletService/Transfer"
+	WalletService_CreateWallet_FullMethodName = "/wallet.v1.WalletService/CreateWallet"
+	WalletService_GetWallet_FullMethodName    = "/wallet.v1.WalletService/GetWallet"
+	WalletService_GetBalance_FullMethodName   = "/wallet.v1.WalletService/GetBalance"
+	WalletService_Deposit_FullMethodName      = "/wallet.v1.WalletService/Deposit"
+	WalletService_Transfer_FullMethodName     = "/wallet.v1.WalletService/Transfer"
 )
 
 // WalletServiceClient is the client API for WalletService service.
@@ -34,10 +36,16 @@ const (
 // WalletService is the wallet's API for our other services. Clients outside
 // the cluster use the REST API, through the gateway.
 type WalletServiceClient interface {
+	// CreateWallet opens a wallet for the caller, in one currency. A user has at
+	// most one wallet per currency.
+	CreateWallet(ctx context.Context, in *CreateWalletRequest, opts ...grpc.CallOption) (*CreateWalletResponse, error)
 	// GetWallet returns a wallet.
 	GetWallet(ctx context.Context, in *GetWalletRequest, opts ...grpc.CallOption) (*GetWalletResponse, error)
 	// GetBalance returns a wallet's balance, derived from its ledger entries.
 	GetBalance(ctx context.Context, in *GetBalanceRequest, opts ...grpc.CallOption) (*GetBalanceResponse, error)
+	// Deposit adds money from outside to one of the caller's wallets, once per
+	// idempotency key, like Transfer.
+	Deposit(ctx context.Context, in *DepositRequest, opts ...grpc.CallOption) (*DepositResponse, error)
 	// Transfer moves money between two wallets in the same currency. It runs
 	// once per idempotency key: a retry with the same key returns the first
 	// response, and moves nothing.
@@ -50,6 +58,16 @@ type walletServiceClient struct {
 
 func NewWalletServiceClient(cc grpc.ClientConnInterface) WalletServiceClient {
 	return &walletServiceClient{cc}
+}
+
+func (c *walletServiceClient) CreateWallet(ctx context.Context, in *CreateWalletRequest, opts ...grpc.CallOption) (*CreateWalletResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateWalletResponse)
+	err := c.cc.Invoke(ctx, WalletService_CreateWallet_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *walletServiceClient) GetWallet(ctx context.Context, in *GetWalletRequest, opts ...grpc.CallOption) (*GetWalletResponse, error) {
@@ -66,6 +84,16 @@ func (c *walletServiceClient) GetBalance(ctx context.Context, in *GetBalanceRequ
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetBalanceResponse)
 	err := c.cc.Invoke(ctx, WalletService_GetBalance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *walletServiceClient) Deposit(ctx context.Context, in *DepositRequest, opts ...grpc.CallOption) (*DepositResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DepositResponse)
+	err := c.cc.Invoke(ctx, WalletService_Deposit_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -89,10 +117,16 @@ func (c *walletServiceClient) Transfer(ctx context.Context, in *TransferRequest,
 // WalletService is the wallet's API for our other services. Clients outside
 // the cluster use the REST API, through the gateway.
 type WalletServiceServer interface {
+	// CreateWallet opens a wallet for the caller, in one currency. A user has at
+	// most one wallet per currency.
+	CreateWallet(context.Context, *CreateWalletRequest) (*CreateWalletResponse, error)
 	// GetWallet returns a wallet.
 	GetWallet(context.Context, *GetWalletRequest) (*GetWalletResponse, error)
 	// GetBalance returns a wallet's balance, derived from its ledger entries.
 	GetBalance(context.Context, *GetBalanceRequest) (*GetBalanceResponse, error)
+	// Deposit adds money from outside to one of the caller's wallets, once per
+	// idempotency key, like Transfer.
+	Deposit(context.Context, *DepositRequest) (*DepositResponse, error)
 	// Transfer moves money between two wallets in the same currency. It runs
 	// once per idempotency key: a retry with the same key returns the first
 	// response, and moves nothing.
@@ -107,11 +141,17 @@ type WalletServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedWalletServiceServer struct{}
 
+func (UnimplementedWalletServiceServer) CreateWallet(context.Context, *CreateWalletRequest) (*CreateWalletResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateWallet not implemented")
+}
 func (UnimplementedWalletServiceServer) GetWallet(context.Context, *GetWalletRequest) (*GetWalletResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetWallet not implemented")
 }
 func (UnimplementedWalletServiceServer) GetBalance(context.Context, *GetBalanceRequest) (*GetBalanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetBalance not implemented")
+}
+func (UnimplementedWalletServiceServer) Deposit(context.Context, *DepositRequest) (*DepositResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Deposit not implemented")
 }
 func (UnimplementedWalletServiceServer) Transfer(context.Context, *TransferRequest) (*TransferResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Transfer not implemented")
@@ -135,6 +175,24 @@ func RegisterWalletServiceServer(s grpc.ServiceRegistrar, srv WalletServiceServe
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&WalletService_ServiceDesc, srv)
+}
+
+func _WalletService_CreateWallet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateWalletRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WalletServiceServer).CreateWallet(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WalletService_CreateWallet_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WalletServiceServer).CreateWallet(ctx, req.(*CreateWalletRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _WalletService_GetWallet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -173,6 +231,24 @@ func _WalletService_GetBalance_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WalletService_Deposit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DepositRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WalletServiceServer).Deposit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WalletService_Deposit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WalletServiceServer).Deposit(ctx, req.(*DepositRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _WalletService_Transfer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(TransferRequest)
 	if err := dec(in); err != nil {
@@ -199,12 +275,20 @@ var WalletService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*WalletServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
+			MethodName: "CreateWallet",
+			Handler:    _WalletService_CreateWallet_Handler,
+		},
+		{
 			MethodName: "GetWallet",
 			Handler:    _WalletService_GetWallet_Handler,
 		},
 		{
 			MethodName: "GetBalance",
 			Handler:    _WalletService_GetBalance_Handler,
+		},
+		{
+			MethodName: "Deposit",
+			Handler:    _WalletService_Deposit_Handler,
 		},
 		{
 			MethodName: "Transfer",

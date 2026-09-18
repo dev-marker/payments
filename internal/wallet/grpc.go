@@ -48,6 +48,21 @@ func toMoney(m Money) *walletv1.Money {
 	return &walletv1.Money{AmountMinor: m.Amount, Currency: m.Currency}
 }
 
+func fromMoney(m *walletv1.Money) Money {
+	return Money{Amount: m.GetAmountMinor(), Currency: m.GetCurrency()}
+}
+
+// CreateWallet opens a wallet for the caller.
+func (s *GRPCServer) CreateWallet(
+	ctx context.Context, req *walletv1.CreateWalletRequest,
+) (*walletv1.CreateWalletResponse, error) {
+	acc, err := s.svc.CreateWallet(ctx, caller(ctx).String(), req.GetCurrency())
+	if err != nil {
+		return nil, err
+	}
+	return &walletv1.CreateWalletResponse{Wallet: walletPB(acc)}, nil
+}
+
 // GetWallet returns a wallet.
 func (s *GRPCServer) GetWallet(
 	ctx context.Context, req *walletv1.GetWalletRequest,
@@ -56,10 +71,15 @@ func (s *GRPCServer) GetWallet(
 	if err != nil {
 		return nil, err
 	}
-	acc, err := s.svc.Wallet(ctx, id)
+	acc, err := s.svc.As(caller(ctx)).Wallet(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	return &walletv1.GetWalletResponse{Wallet: walletPB(acc)}, nil
+}
+
+// walletPB converts a wallet to its protobuf message.
+func walletPB(acc Account) *walletv1.Wallet {
 	w := &walletv1.Wallet{
 		Id:         acc.ID.String(),
 		Currency:   acc.Currency,
@@ -68,7 +88,7 @@ func (s *GRPCServer) GetWallet(
 	if acc.OwnerID != nil {
 		w.OwnerId = acc.OwnerID.String()
 	}
-	return &walletv1.GetWalletResponse{Wallet: w}, nil
+	return w
 }
 
 // GetBalance returns a wallet's balance.
@@ -79,7 +99,7 @@ func (s *GRPCServer) GetBalance(
 	if err != nil {
 		return nil, err
 	}
-	b, err := s.svc.Balance(ctx, id)
+	b, err := s.svc.As(caller(ctx)).Balance(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -89,53 +109,97 @@ func (s *GRPCServer) GetBalance(
 	}, nil
 }
 
-// Transfer moves money between two wallets, once per idempotency key.
-func (s *GRPCServer) Transfer(
-	ctx context.Context, req *walletv1.TransferRequest,
-) (*walletv1.TransferResponse, error) {
-	key, err := transferKey(ctx, req)
+// Deposit adds money to one of the caller's wallets, once per key.
+func (s *GRPCServer) Deposit(
+	ctx context.Context, req *walletv1.DepositRequest,
+) (*walletv1.DepositResponse, error) {
+	id, err := parseID("wallet_id", req.GetWalletId())
 	if err != nil {
 		return nil, err
 	}
-	amount := Money{Amount: req.GetAmount().GetAmountMinor(), Currency: req.GetAmount().GetCurrency()}
-	stored, err := s.keys.Run(ctx, key, func(tx pgx.Tx) (idempotency.Response, error) {
-		tr, err := s.svc.WithTx(tx).Transfer(ctx, req.GetFromWalletId(), req.GetToWalletId(), amount)
+	amount := fromMoney(req.GetAmount())
+	resp := &walletv1.DepositResponse{}
+	err = s.once(ctx, req.GetIdempotencyKey(), req, resp, func(svc *Service) (proto.Message, error) {
+		tx, err := svc.Deposit(ctx, id, amount)
 		if err != nil {
-			return idempotency.Response{}, err
+			return nil, err
 		}
-		// We store the response in protobuf's own encoding, with the gRPC
-		// status code, OK, where HTTP keeps its 201.
-		body, err := proto.Marshal(&walletv1.TransferResponse{
+		return &walletv1.DepositResponse{
+			TransactionId: tx.ID.String(),
+			WalletId:      id.String(),
+			Amount:        toMoney(amount),
+			CreateTime:    timestamppb.New(tx.CreatedAt),
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// Transfer moves money from one of the caller's wallets, once per key.
+func (s *GRPCServer) Transfer(
+	ctx context.Context, req *walletv1.TransferRequest,
+) (*walletv1.TransferResponse, error) {
+	amount := fromMoney(req.GetAmount())
+	resp := &walletv1.TransferResponse{}
+	err := s.once(ctx, req.GetIdempotencyKey(), req, resp, func(svc *Service) (proto.Message, error) {
+		tr, err := svc.Transfer(ctx, req.GetFromWalletId(), req.GetToWalletId(), amount)
+		if err != nil {
+			return nil, err
+		}
+		return &walletv1.TransferResponse{
 			TransactionId: tr.TransactionID.String(),
 			FromWalletId:  tr.From.String(),
 			ToWalletId:    tr.To.String(),
 			Amount:        toMoney(tr.Amount),
 			CreateTime:    timestamppb.New(tr.CreatedAt),
-		})
-		return idempotency.Response{Status: int(codes.OK), Body: body}, err
+		}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	if stored.Replayed {
-		grpc.SetHeader(ctx, metadata.Pairs("idempotent-replayed", "true"))
-	}
-	// A first answer and a replay take the same path: decode what we stored.
-	resp := &walletv1.TransferResponse{}
-	if err := proto.Unmarshal(stored.Body, resp); err != nil {
-		return nil, fmt.Errorf("decode stored response: %w", err)
-	}
 	return resp, nil
 }
 
-// transferKey is a transfer's idempotency key: the key in the request, scoped
-// to the user who sent it, with a fingerprint of the whole request.
-func transferKey(ctx context.Context, req *walletv1.TransferRequest) (idempotency.Key, error) {
+// once runs do once per idempotency key, as the caller, and decodes the stored
+// response into out: a first answer and a replay take the same path.
+func (s *GRPCServer) once(
+	ctx context.Context, value string, req, out proto.Message,
+	do func(svc *Service) (proto.Message, error),
+) error {
+	key, err := requestKey(ctx, value, req)
+	if err != nil {
+		return err
+	}
+	stored, err := s.keys.Run(ctx, key, func(tx pgx.Tx) (idempotency.Response, error) {
+		resp, err := do(s.svc.As(caller(ctx)).WithTx(tx))
+		if err != nil {
+			return idempotency.Response{}, err
+		}
+		body, err := proto.Marshal(resp)
+		return idempotency.Response{Status: int(codes.OK), Body: body}, err
+	})
+	if err != nil {
+		return err
+	}
+	if stored.Replayed {
+		grpc.SetHeader(ctx, metadata.Pairs("idempotent-replayed", "true"))
+	}
+	if err := proto.Unmarshal(stored.Body, out); err != nil {
+		return fmt.Errorf("decode stored response: %w", err)
+	}
+	return nil
+}
+
+// requestKey is an RPC's idempotency key, scoped to the user who sent it, with
+// a fingerprint of the method and the whole request.
+func requestKey(ctx context.Context, value string, req proto.Message) (idempotency.Key, error) {
 	user, ok := authn.UserID(ctx)
 	if !ok {
 		return idempotency.Key{}, authn.ErrMissingToken
 	}
-	if k := req.GetIdempotencyKey(); k == "" || len(k) > 255 {
+	if value == "" || len(value) > 255 {
 		var v apperr.ValidationError
 		v.Add("idempotency_key", "must be 1 to 255 characters")
 		return idempotency.Key{}, v.Err()
@@ -145,9 +209,10 @@ func transferKey(ctx context.Context, req *walletv1.TransferRequest) (idempotenc
 	if err != nil {
 		return idempotency.Key{}, err
 	}
-	fp, err := idempotency.Fingerprint("gRPC", walletv1.WalletService_Transfer_FullMethodName, body)
+	method, _ := grpc.Method(ctx)
+	fp, err := idempotency.Fingerprint("gRPC", method, body)
 	if err != nil {
 		return idempotency.Key{}, err
 	}
-	return idempotency.Key{Scope: user.String(), Value: req.GetIdempotencyKey(), Fingerprint: fp}, nil
+	return idempotency.Key{Scope: user.String(), Value: value, Fingerprint: fp}, nil
 }

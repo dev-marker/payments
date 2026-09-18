@@ -1,9 +1,11 @@
 package wallet
 
 import (
+	"context"
 	"net/http"
 	"time"
 
+	"github.com/fiston-user/payments/internal/platform/authn"
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/idempotency"
 	"github.com/google/uuid"
@@ -86,11 +88,16 @@ func walletID(r *http.Request) (uuid.UUID, error) {
 	return id, nil
 }
 
-// caller names who sent a request. Clients choose their idempotency keys, so a
-// key is only unique per caller. Until we authenticate callers, every request
-// comes from the same one.
-func caller(*http.Request) string {
-	return "anonymous"
+// caller returns the user who sent a request, as authn.Require stored it. If a
+// route ever misses Require, it's uuid.Nil, who owns nothing: it fails closed.
+func caller(ctx context.Context) uuid.UUID {
+	user, _ := authn.UserID(ctx)
+	return user
+}
+
+// as returns the Service acting for the user who sent r.
+func (h *Handler) as(r *http.Request) *Service {
+	return h.svc.As(caller(r.Context()))
 }
 
 // idempotent runs a request that moves money once per idempotency key. req is
@@ -101,12 +108,12 @@ func (h *Handler) idempotent(
 	w http.ResponseWriter, r *http.Request, req any,
 	do func(svc *Service) (idempotency.Response, error),
 ) error {
-	key, err := idempotency.NewKey(r, caller(r), req)
+	key, err := idempotency.NewKey(r, caller(r.Context()).String(), req)
 	if err != nil {
 		return err
 	}
 	resp, err := h.keys.Run(r.Context(), key, func(tx pgx.Tx) (idempotency.Response, error) {
-		return do(h.svc.WithTx(tx))
+		return do(h.as(r).WithTx(tx))
 	})
 	if err != nil {
 		return err
@@ -117,13 +124,12 @@ func (h *Handler) idempotent(
 
 func (h *Handler) createWallet(w http.ResponseWriter, r *http.Request) error {
 	var req struct {
-		OwnerID  string `json:"owner_id"`
 		Currency string `json:"currency"`
 	}
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		return err
 	}
-	acc, err := h.svc.CreateWallet(r.Context(), req.OwnerID, req.Currency)
+	acc, err := h.svc.CreateWallet(r.Context(), caller(r.Context()).String(), req.Currency)
 	if err != nil {
 		return err
 	}
@@ -137,7 +143,7 @@ func (h *Handler) getWallet(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	acc, err := h.svc.Wallet(r.Context(), id)
+	acc, err := h.as(r).Wallet(r.Context(), id)
 	if err != nil {
 		return err
 	}
@@ -150,7 +156,7 @@ func (h *Handler) getBalance(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	b, err := h.svc.Balance(r.Context(), id)
+	b, err := h.as(r).Balance(r.Context(), id)
 	if err != nil {
 		return err
 	}
@@ -219,7 +225,7 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	page, err := h.svc.Entries(r.Context(), id, r.URL.Query().Get("cursor"), limit)
+	page, err := h.as(r).Entries(r.Context(), id, r.URL.Query().Get("cursor"), limit)
 	if err != nil {
 		return err
 	}
