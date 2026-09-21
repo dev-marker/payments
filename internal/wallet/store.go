@@ -9,6 +9,7 @@ import (
 
 	"github.com/fiston-user/payments/internal/platform/apperr"
 	"github.com/fiston-user/payments/internal/wallet/walletdb"
+	"github.com/fiston-user/payments/internal/wallet/walletevents"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -61,9 +62,18 @@ func (s *Store) WithTx(tx pgx.Tx) *Store {
 	return &Store{pool: s.pool, q: s.q.WithTx(tx), tx: tx}
 }
 
-// CreateAccount opens a new account. OwnerID is nil for system accounts.
+// CreateAccount opens a new account. OwnerID is nil for system accounts. A
+// new wallet is an event, written in the same transaction.
 func (s *Store) CreateAccount(ctx context.Context, a NewAccount) (Account, error) {
-	acc, err := s.q.CreateAccount(ctx, a)
+	var acc Account
+	err := s.inTx(ctx, func(q *walletdb.Queries) error {
+		var err error
+		acc, err = q.CreateAccount(ctx, a)
+		if err != nil || acc.Kind != KindWallet {
+			return err
+		}
+		return enqueue(ctx, q, walletevents.WalletCreated, acc.ID, eventWallet(acc))
+	})
 	if isUniqueViolation(err) {
 		return Account{}, ErrAccountExists
 	}

@@ -152,13 +152,7 @@ func (s *Service) Deposit(ctx context.Context, walletID uuid.UUID, amount Money)
 		// must get a 500, not a 404.
 		return Transaction{}, fmt.Errorf("settlement account for %s: %v", w.Currency, err)
 	}
-	return s.store.PostTransaction(ctx, NewTransaction{
-		Description: "deposit",
-		Postings: []Posting{
-			{AccountID: settlement.ID, Direction: Debit, Amount: amount.Amount, Currency: w.Currency},
-			{AccountID: w.ID, Direction: Credit, Amount: amount.Amount, Currency: w.Currency},
-		},
-	})
+	return s.store.Deposit(ctx, settlement, w, amount.Amount)
 }
 
 // checkAmount records a problem in v if amount can't be moved: money moves in
@@ -210,7 +204,7 @@ func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount Mone
 		return Transfer{}, err
 	}
 
-	tx, err := s.store.Transfer(ctx, from.ID, to.ID, amount.Amount, amount.Currency)
+	tx, err := s.store.Transfer(ctx, from, to, amount.Amount)
 	if err != nil {
 		return Transfer{}, err
 	}

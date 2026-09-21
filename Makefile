@@ -32,7 +32,9 @@ WALLET_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/wallet?s
 AUTH_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/auth?sslmode=disable
 # Redis database 1, so tests never touch the services' data in database 0.
 REDIS_TEST_URL ?= redis://localhost:6379/1
-export WALLET_TEST_DATABASE_URL AUTH_TEST_DATABASE_URL REDIS_TEST_URL
+# Tests create streams of their own, with random names, and delete them.
+NATS_TEST_URL ?= nats://localhost:4222
+export WALLET_TEST_DATABASE_URL AUTH_TEST_DATABASE_URL REDIS_TEST_URL NATS_TEST_URL
 
 # Run part of the suite with PKGS=./internal/wallet TESTFLAGS='-run Transfer'.
 PKGS ?= ./...

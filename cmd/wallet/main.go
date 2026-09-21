@@ -20,9 +20,13 @@ import (
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/idempotency"
 	"github.com/fiston-user/payments/internal/platform/logging"
+	"github.com/fiston-user/payments/internal/platform/natsx"
+	"github.com/fiston-user/payments/internal/platform/outbox"
 	"github.com/fiston-user/payments/internal/platform/postgres"
 	"github.com/fiston-user/payments/internal/platform/redis"
 	"github.com/fiston-user/payments/internal/wallet"
+	"github.com/fiston-user/payments/internal/wallet/walletevents"
+	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
@@ -66,6 +70,24 @@ func main() {
 		logger.Warn("redis unreachable, idempotency keys use postgres only", "err", err)
 	} else {
 		logger.Info("connected to redis")
+	}
+
+	// NATS, for events. Like Postgres, and unlike Redis, it must be there when
+	// we start: the stream has to exist.
+	nc, err := natsx.Connect(cfg.NATSURL, "wallet", logger)
+	if err != nil {
+		logger.Error("connect to nats", "err", err)
+		os.Exit(1)
+	}
+	logger.Info("connected to nats", "url", nc.ConnectedUrl())
+	js, err := jetstream.New(nc)
+	if err != nil {
+		logger.Error("jetstream", "err", err)
+		os.Exit(1)
+	}
+	if err := natsx.EnsureStream(context.Background(), js, walletevents.StreamConfig(cfg.NATSReplicas)); err != nil {
+		logger.Error("create stream", "err", err)
+		os.Exit(1)
 	}
 
 	// The auth service's public key: enough to check access tokens, and
@@ -132,6 +154,12 @@ func main() {
 	// Forget expired idempotency keys, once an hour.
 	go keys.Cleanup(ctx, time.Hour)
 
+	// The outbox relay publishes our events. It has a context of its own, so
+	// it keeps publishing while the servers drain, and stops after them.
+	relayCtx, stopRelay := context.WithCancel(context.Background())
+	var relay sync.WaitGroup
+	relay.Go(func() { outbox.NewRelay(pool, js, logger).Run(relayCtx) })
+
 	go func() {
 		logger.Info("wallet service listening", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -171,9 +199,15 @@ func main() {
 	wg.Go(func() { grpcx.Shutdown(shutdownCtx, grpcSrv) })
 	wg.Wait()
 	logger.Info("servers stopped")
+	// Then the relay. A batch it was in the middle of rolls back, and goes
+	// out on the next start: at least once.
+	stopRelay()
+	relay.Wait()
+	logger.Info("outbox relay stopped")
 
-	// Close the pool last: requests that were still finishing needed it.
+	// Close the connections last: requests that were still finishing needed them.
+	nc.Close()
 	pool.Close()
 	rdb.Close()
-	logger.Info("database pool and redis client closed")
+	logger.Info("nats, database pool and redis client closed")
 }

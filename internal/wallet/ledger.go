@@ -6,6 +6,7 @@ import (
 
 	"github.com/fiston-user/payments/internal/platform/postgres"
 	"github.com/fiston-user/payments/internal/wallet/walletdb"
+	"github.com/fiston-user/payments/internal/wallet/walletevents"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -79,6 +80,34 @@ func (s *Store) PostTransaction(ctx context.Context, nt NewTransaction) (Transac
 	})
 	if err != nil {
 		return Transaction{}, fmt.Errorf("post transaction: %w", err)
+	}
+	return posted, nil
+}
+
+// Deposit records money arriving in w from outside, funded by a settlement
+// account, together with its deposit.completed event.
+func (s *Store) Deposit(ctx context.Context, settlement, w Account, amount int64) (Transaction, error) {
+	var posted Transaction
+	err := s.inTx(ctx, func(q *walletdb.Queries) error {
+		var err error
+		posted, err = insertTransaction(ctx, q, NewTransaction{
+			Description: "deposit",
+			Postings: []Posting{
+				{AccountID: settlement.ID, Direction: Debit, Amount: amount, Currency: w.Currency},
+				{AccountID: w.ID, Direction: Credit, Amount: amount, Currency: w.Currency},
+			},
+		})
+		if err != nil {
+			return err
+		}
+		return enqueue(ctx, q, walletevents.DepositCompleted, w.ID, walletevents.Deposit{
+			TransactionID: posted.ID,
+			Wallet:        eventWallet(w),
+			Amount:        amount,
+		})
+	})
+	if err != nil {
+		return Transaction{}, fmt.Errorf("deposit: %w", err)
 	}
 	return posted, nil
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/fiston-user/payments/internal/platform/apperr"
 	"github.com/fiston-user/payments/internal/wallet/walletdb"
+	"github.com/fiston-user/payments/internal/wallet/walletevents"
 	"github.com/google/uuid"
 )
 
@@ -16,7 +17,9 @@ var ErrInsufficientFunds = apperr.NewRule("insufficient_funds", "insufficient fu
 
 // Transfer moves amount from one account to another, as one balanced
 // transaction, and fails with ErrInsufficientFunds if from can't cover it.
-func (s *Store) Transfer(ctx context.Context, from, to uuid.UUID, amount int64, currency string) (Transaction, error) {
+// The transfer.completed event commits with it.
+func (s *Store) Transfer(ctx context.Context, src, dst Account, amount int64) (Transaction, error) {
+	from, to, currency := src.ID, dst.ID, src.Currency
 	var posted Transaction
 	err := s.inTx(ctx, func(q *walletdb.Queries) error {
 		// Lock both accounts until we commit. Another transfer that touches
@@ -48,7 +51,15 @@ func (s *Store) Transfer(ctx context.Context, from, to uuid.UUID, amount int64, 
 				{AccountID: to, Direction: Credit, Amount: amount, Currency: currency},
 			},
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		return enqueue(ctx, q, walletevents.TransferCompleted, from, walletevents.Transfer{
+			TransactionID: posted.ID,
+			From:          eventWallet(src),
+			To:            eventWallet(dst),
+			Amount:        amount,
+		})
 	})
 	if err != nil {
 		return Transaction{}, fmt.Errorf("transfer: %w", err)

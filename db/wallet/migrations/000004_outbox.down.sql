@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS outbox;
+DROP FUNCTION IF EXISTS outbox_notify();

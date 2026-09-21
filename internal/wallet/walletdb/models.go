@@ -155,6 +155,15 @@ type IdempotencyKey struct {
 	ExpiresAt    time.Time          `json:"expires_at"`
 }
 
+type Outbox struct {
+	Seq         int64              `json:"seq"`
+	EventID     uuid.UUID          `json:"event_id"`
+	Subject     string             `json:"subject"`
+	Payload     []byte             `json:"payload"`
+	CreatedAt   time.Time          `json:"created_at"`
+	PublishedAt pgtype.Timestamptz `json:"published_at"`
+}
+
 type Transaction struct {
 	ID          uuid.UUID `json:"id"`
 	Description string    `json:"description"`
