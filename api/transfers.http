@@ -1,0 +1,83 @@
+# Transfers through the gateway. The first seven requests set up Alice and
+# Bob, once; then Alice pays Bob, and we follow the transfer.
+@baseUrl = http://localhost:8080
+@password = correct horse battery staple
+@token = {{login.response.body.access_token}}
+@walletId = {{wallet.response.body.id}}
+
+### Register
+POST {{baseUrl}}/v1/auth/register
+Content-Type: application/json
+
+{"email": "alice@example.com", "password": "{{password}}"}
+
+### Log in
+# @name login
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{"email": "alice@example.com", "password": "{{password}}"}
+
+### Open a wallet
+# @name wallet
+POST {{baseUrl}}/v1/wallets
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"currency": "USD"}
+
+### Deposit fifty dollars
+POST {{baseUrl}}/v1/wallets/{{walletId}}/deposits
+Authorization: Bearer {{token}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"amount": 5000, "currency": "USD"}
+
+### Bob, so Alice has someone to pay
+POST {{baseUrl}}/v1/auth/register
+Content-Type: application/json
+
+{"email": "bob@example.com", "password": "{{password}}"}
+
+###
+# @name bob
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{"email": "bob@example.com", "password": "{{password}}"}
+
+###
+# @name bobsWallet
+POST {{baseUrl}}/v1/wallets
+Authorization: Bearer {{bob.response.body.access_token}}
+Content-Type: application/json
+
+{"currency": "USD"}
+
+### Pay Bob fifteen dollars
+# @name transfer
+POST {{baseUrl}}/v1/transfers
+Authorization: Bearer {{token}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "from": "{{walletId}}",
+  "to": "{{bobsWallet.response.body.id}}",
+  "amount": 1500,
+  "currency": "USD"
+}
+
+### Where is it?
+GET {{baseUrl}}{{transfer.response.headers.Location}}
+Authorization: Bearer {{token}}
+
+### Balance
+GET {{baseUrl}}/v1/wallets/{{walletId}}/balance
+Authorization: Bearer {{token}}
+
+### Bob's balance
+GET {{baseUrl}}/v1/wallets/{{bobsWallet.response.body.id}}/balance
+Authorization: Bearer {{bob.response.body.access_token}}
+

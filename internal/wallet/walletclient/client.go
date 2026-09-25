@@ -17,7 +17,8 @@ import (
 // serviceConfig is how gRPC calls the wallet: spread over all its addresses,
 // and with automatic retries, but only where a retry can't do harm. Reads are
 // always safe. Transfer is safe only because a retry sends the same message,
-// with the same idempotency key. ABORTED is a transfer that's still running.
+// with the same idempotency key, and holds because the hold ID is one.
+// ABORTED is a transfer that's still running.
 const serviceConfig = `{
 	"loadBalancingConfig": [{"round_robin": {}}],
 	"methodConfig": [{
@@ -35,7 +36,8 @@ const serviceConfig = `{
 	}, {
 		"name": [
 			{"service": "wallet.v1.WalletService", "method": "Deposit"},
-			{"service": "wallet.v1.WalletService", "method": "Transfer"}
+			{"service": "wallet.v1.WalletService", "method": "Transfer"},
+			{"service": "wallet.v1.HoldService"}
 		],
 		"retryPolicy": {
 			"maxAttempts": 3,
@@ -52,6 +54,7 @@ const serviceConfig = `{
 // your service starts, and share it.
 type Client struct {
 	walletv1.WalletServiceClient
+	walletv1.HoldServiceClient
 	conn *grpc.ClientConn
 }
 
@@ -71,7 +74,11 @@ func New(target string, timeout time.Duration, opts ...grpc.DialOption) (*Client
 	if err != nil {
 		return nil, fmt.Errorf("wallet client: %w", err)
 	}
-	return &Client{WalletServiceClient: walletv1.NewWalletServiceClient(conn), conn: conn}, nil
+	return &Client{
+		WalletServiceClient: walletv1.NewWalletServiceClient(conn),
+		HoldServiceClient:   walletv1.NewHoldServiceClient(conn),
+		conn:                conn,
+	}, nil
 }
 
 // Close closes the connection to the wallet service.

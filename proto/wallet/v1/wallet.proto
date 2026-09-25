@@ -25,6 +25,18 @@ service WalletService {
   rpc Transfer(TransferRequest) returns (TransferResponse);
 }
 
+// HoldService sets money aside for operations that take several steps, like
+// a transfer saga. Its callers are our services, so requests name the user
+// they act for. Every call is safe to repeat: the hold ID is the key.
+service HoldService {
+  // Hold moves money out of a wallet into a hold, if the wallet can cover it.
+  rpc Hold(HoldRequest) returns (HoldResponse);
+  // Capture pays a hold into another wallet.
+  rpc Capture(CaptureRequest) returns (CaptureResponse);
+  // Release gives a hold back to its wallet.
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+}
+
 // Money is an amount in minor units of a currency, like cents. Never a float.
 message Money {
   // 1050 is 10.50 USD.
@@ -95,4 +107,43 @@ message TransferResponse {
   string to_wallet_id = 3;
   Money amount = 4;
   google.protobuf.Timestamp create_time = 5;
+}
+
+// Hold is money set aside, until it's captured or released.
+message Hold {
+  string id = 1;
+  string wallet_id = 2;
+  Money amount = 3;
+  // held, captured or released
+  string status = 4;
+}
+
+message HoldRequest {
+  // Chosen by the caller, like a transfer's ID.
+  string hold_id = 1;
+  // The wallet must be theirs.
+  string owner_id = 2;
+  string wallet_id = 3;
+  Money amount = 4;
+}
+
+message HoldResponse {
+  Hold hold = 1;
+}
+
+message CaptureRequest {
+  string hold_id = 1;
+  string to_wallet_id = 2;
+}
+
+message CaptureResponse {
+  Hold hold = 1;
+}
+
+message ReleaseRequest {
+  string hold_id = 1;
+}
+
+message ReleaseResponse {
+  Hold hold = 1;
 }

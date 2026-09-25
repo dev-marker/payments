@@ -115,6 +115,59 @@ func (e EntryDirection) Valid() bool {
 	return false
 }
 
+type HoldStatus string
+
+const (
+	HoldStatusHeld     HoldStatus = "held"
+	HoldStatusCaptured HoldStatus = "captured"
+	HoldStatusReleased HoldStatus = "released"
+)
+
+func (e *HoldStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = HoldStatus(s)
+	case string:
+		*e = HoldStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for HoldStatus: %T", src)
+	}
+	return nil
+}
+
+type NullHoldStatus struct {
+	HoldStatus HoldStatus `json:"hold_status"`
+	Valid      bool       `json:"valid"` // Valid is true if HoldStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullHoldStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.HoldStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.HoldStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullHoldStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.HoldStatus), nil
+}
+
+func (e HoldStatus) Valid() bool {
+	switch e {
+	case HoldStatusHeld,
+		HoldStatusCaptured,
+		HoldStatusReleased:
+		return true
+	}
+	return false
+}
+
 type Account struct {
 	ID            uuid.UUID      `json:"id"`
 	OwnerID       *uuid.UUID     `json:"owner_id"`
@@ -123,6 +176,7 @@ type Account struct {
 	NormalBalance EntryDirection `json:"normal_balance"`
 	CreatedAt     time.Time      `json:"created_at"`
 	Kind          AccountKind    `json:"kind"`
+	Frozen        bool           `json:"frozen"`
 }
 
 type AccountBalance struct {
@@ -140,6 +194,19 @@ type Entry struct {
 	Amount        int64          `json:"amount"`
 	Currency      string         `json:"currency"`
 	CreatedAt     time.Time      `json:"created_at"`
+}
+
+type Hold struct {
+	ID         uuid.UUID          `json:"id"`
+	WalletID   uuid.UUID          `json:"wallet_id"`
+	Amount     int64              `json:"amount"`
+	Currency   string             `json:"currency"`
+	Status     HoldStatus         `json:"status"`
+	HoldTxID   uuid.UUID          `json:"hold_tx_id"`
+	SettledTo  *uuid.UUID         `json:"settled_to"`
+	SettleTxID *uuid.UUID         `json:"settle_tx_id"`
+	CreatedAt  time.Time          `json:"created_at"`
+	SettledAt  pgtype.Timestamptz `json:"settled_at"`
 }
 
 type IdempotencyKey struct {

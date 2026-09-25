@@ -31,3 +31,12 @@ sql:
         out: internal/auth/authdb
         sql_package: pgx/v5
         overrides: *overrides
+  - engine: postgresql
+    schema: db/transfer/migrations
+    queries: db/transfer/queries
+    gen:
+      go:
+        package: transferdb
+        out: internal/transfer/transferdb
+        sql_package: pgx/v5
+        overrides: *overrides

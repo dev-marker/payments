@@ -60,6 +60,7 @@ func main() {
 		Addr: cfg.HTTPAddr,
 		Handler: gateway.New(gateway.Config{
 			AuthURL:   cfg.AuthURL,
+			Transfers: cfg.TransferURL,
 			Wallet:    wallet,
 			Verifier:  authn.NewVerifier(pub),
 			Redis:     rdb,
@@ -82,7 +83,7 @@ func main() {
 
 	go func() {
 		logger.Info("gateway listening", "addr", srv.Addr,
-			"auth", cfg.AuthURL.String(), "wallet", cfg.WalletAddr)
+			"auth", cfg.AuthURL.String(), "wallet", cfg.WalletAddr, "transfer", cfg.TransferURL.String())
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server failed", "err", err)
 			os.Exit(1)

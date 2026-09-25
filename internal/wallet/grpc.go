@@ -38,7 +38,7 @@ func parseID(field, id string) (uuid.UUID, error) {
 	wid, err := uuid.Parse(id)
 	if err != nil {
 		var v apperr.ValidationError
-		v.Add(field, "must be a wallet ID")
+		v.Add(field, "must be a UUID")
 		return uuid.Nil, v.Err()
 	}
 	return wid, nil
@@ -215,4 +215,82 @@ func requestKey(ctx context.Context, value string, req proto.Message) (idempoten
 		return idempotency.Key{}, err
 	}
 	return idempotency.Key{Scope: user.String(), Value: value, Fingerprint: fp}, nil
+}
+
+// HoldServer serves the HoldService. It trusts the caller to say which user
+// it acts for: users never reach it, and in episode 21, mTLS proves who calls.
+type HoldServer struct {
+	walletv1.UnimplementedHoldServiceServer
+	svc *Service
+}
+
+// NewHoldServer returns a HoldServer that serves svc.
+func NewHoldServer(svc *Service) *HoldServer {
+	return &HoldServer{svc: svc}
+}
+
+// Hold sets money aside from the owner's wallet.
+func (s *HoldServer) Hold(
+	ctx context.Context, req *walletv1.HoldRequest,
+) (*walletv1.HoldResponse, error) {
+	id, err := parseID("hold_id", req.GetHoldId())
+	if err != nil {
+		return nil, err
+	}
+	owner, err := parseID("owner_id", req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
+	wid, err := parseID("wallet_id", req.GetWalletId())
+	if err != nil {
+		return nil, err
+	}
+	h, err := s.svc.As(owner).Hold(ctx, id, wid, fromMoney(req.GetAmount()))
+	if err != nil {
+		return nil, err
+	}
+	return &walletv1.HoldResponse{Hold: holdPB(h)}, nil
+}
+
+// Capture pays a hold into another wallet.
+func (s *HoldServer) Capture(
+	ctx context.Context, req *walletv1.CaptureRequest,
+) (*walletv1.CaptureResponse, error) {
+	id, err := parseID("hold_id", req.GetHoldId())
+	if err != nil {
+		return nil, err
+	}
+	to, err := parseID("to_wallet_id", req.GetToWalletId())
+	if err != nil {
+		return nil, err
+	}
+	h, err := s.svc.Capture(ctx, id, to)
+	if err != nil {
+		return nil, err
+	}
+	return &walletv1.CaptureResponse{Hold: holdPB(h)}, nil
+}
+
+// Release gives a hold back to its wallet.
+func (s *HoldServer) Release(
+	ctx context.Context, req *walletv1.ReleaseRequest,
+) (*walletv1.ReleaseResponse, error) {
+	id, err := parseID("hold_id", req.GetHoldId())
+	if err != nil {
+		return nil, err
+	}
+	h, err := s.svc.Release(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &walletv1.ReleaseResponse{Hold: holdPB(h)}, nil
+}
+
+func holdPB(h Hold) *walletv1.Hold {
+	return &walletv1.Hold{
+		Id:       h.ID.String(),
+		WalletId: h.WalletID.String(),
+		Amount:   toMoney(Money{Amount: h.Amount, Currency: h.Currency}),
+		Status:   string(h.Status),
+	}
 }

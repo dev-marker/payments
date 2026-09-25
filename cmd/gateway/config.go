@@ -24,6 +24,7 @@ type Config struct {
 	UserLimit       int
 	Origins         []string
 	AuthURL         *url.URL
+	TransferURL     *url.URL
 }
 
 // loadConfig reads the configuration. Everything has a sensible default except
@@ -42,6 +43,8 @@ func loadConfig(env *config.Env) (Config, error) {
 		Origins:         strings.Split(env.String("GATEWAY_CORS_ORIGINS", "http://localhost:5173"), ","),
 		AuthURL: config.Parse(env, "GATEWAY_AUTH_URL",
 			&url.URL{Scheme: "http", Host: "localhost:8082"}, url.Parse),
+		TransferURL: config.Parse(env, "GATEWAY_TRANSFER_URL",
+			&url.URL{Scheme: "http", Host: "localhost:8083"}, url.Parse),
 	}
 
 	// Text logs for humans in development, JSON for log collectors in production.

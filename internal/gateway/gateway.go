@@ -18,6 +18,7 @@ import (
 // Config is what the gateway needs: services, token checks and limits.
 type Config struct {
 	AuthURL   *url.URL             // the auth service, over HTTP
+	Transfers *url.URL             // the transfer service, over HTTP
 	Wallet    *walletclient.Client // the wallet service, over gRPC
 	Verifier  *authn.Verifier
 	Redis     *redis.Client // the rate limiters' buckets
@@ -29,8 +30,9 @@ type Config struct {
 
 // How long each service gets to answer. Auth hashes passwords, slowly.
 const (
-	authTimeout   = 5 * time.Second
-	walletTimeout = 3 * time.Second
+	authTimeout     = 5 * time.Second
+	walletTimeout   = 3 * time.Second
+	transferTimeout = 3 * time.Second
 )
 
 // New returns the gateway's handler.
@@ -61,7 +63,11 @@ func New(cfg Config) http.Handler {
 	mux.Handle("GET /v1/wallets/{id}", private(walletTimeout, rpc(wallet.get)))
 	mux.Handle("GET /v1/wallets/{id}/balance", private(walletTimeout, rpc(wallet.balance)))
 	mux.Handle("POST /v1/wallets/{id}/deposits", private(walletTimeout, rpc(wallet.deposit)))
-	mux.Handle("POST /v1/transfers", private(walletTimeout, rpc(wallet.transfer)))
+
+	// Transfers are sagas now: the transfer service runs them.
+	transfers := newProxy(cfg.Transfers)
+	mux.Handle("POST /v1/transfers", private(transferTimeout, transfers))
+	mux.Handle("GET /v1/transfers/{id}", private(transferTimeout, transfers))
 	mux.HandleFunc("/", httpx.NotFound)
 
 	return httpx.Chain(mux,

@@ -125,10 +125,15 @@ func main() {
 	mux.HandleFunc("/", httpx.NotFound)
 
 	// The same service, over gRPC, for our other services. Every RPC needs an
-	// access token, except health checks.
-	public := healthpb.Health_ServiceDesc.ServiceName
-	grpcSrv := grpcx.NewServer(logger, verifier.UnaryInterceptor(public))
+	// access token, except health checks, and holds: sagas call those for
+	// users who may be long gone. The gateway never routes to them.
+	noToken := []string{
+		healthpb.Health_ServiceDesc.ServiceName,
+		walletv1.HoldService_ServiceDesc.ServiceName,
+	}
+	grpcSrv := grpcx.NewServer(logger, verifier.UnaryInterceptor(noToken...))
 	walletv1.RegisterWalletServiceServer(grpcSrv, wallet.NewGRPCServer(svc, keys))
+	walletv1.RegisterHoldServiceServer(grpcSrv, wallet.NewHoldServer(svc))
 	healthSrv := health.NewServer()
 	healthpb.RegisterHealthServer(grpcSrv, healthSrv)
 	// Reflection lets tools like grpcurl discover our API. Handy in

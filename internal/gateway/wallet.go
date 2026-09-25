@@ -35,13 +35,6 @@ type (
 		Amount        money     `json:"amount"`
 		CreatedAt     time.Time `json:"created_at"`
 	}
-	transferJSON struct {
-		TransactionID string    `json:"transaction_id"`
-		From          string    `json:"from"`
-		To            string    `json:"to"`
-		Amount        money     `json:"amount"`
-		CreatedAt     time.Time `json:"created_at"`
-	}
 )
 
 func (m money) pb() *walletv1.Money {
@@ -130,37 +123,6 @@ func (a *walletAPI) deposit(w http.ResponseWriter, r *http.Request) error {
 	httpx.WriteJSON(w, r, http.StatusCreated, depositJSON{
 		TransactionID: resp.GetTransactionId(),
 		WalletID:      resp.GetWalletId(),
-		Amount:        toMoney(resp.GetAmount()),
-		CreatedAt:     resp.GetCreateTime().AsTime(),
-	})
-	return nil
-}
-
-func (a *walletAPI) transfer(w http.ResponseWriter, r *http.Request) error {
-	var req struct {
-		From     string `json:"from"`
-		To       string `json:"to"`
-		Amount   int64  `json:"amount"`
-		Currency string `json:"currency"`
-	}
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		return err
-	}
-	var header metadata.MD
-	resp, err := a.client.Transfer(asCaller(r), &walletv1.TransferRequest{
-		IdempotencyKey: r.Header.Get(idempotency.KeyHeader),
-		FromWalletId:   req.From,
-		ToWalletId:     req.To,
-		Amount:         money{req.Amount, req.Currency}.pb(),
-	}, grpc.Header(&header))
-	if err != nil {
-		return err
-	}
-	replayed(w, header)
-	httpx.WriteJSON(w, r, http.StatusCreated, transferJSON{
-		TransactionID: resp.GetTransactionId(),
-		From:          resp.GetFromWalletId(),
-		To:            resp.GetToWalletId(),
 		Amount:        toMoney(resp.GetAmount()),
 		CreatedAt:     resp.GetCreateTime().AsTime(),
 	})

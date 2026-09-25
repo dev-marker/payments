@@ -298,3 +298,195 @@ var WalletService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "wallet/v1/wallet.proto",
 }
+
+const (
+	HoldService_Hold_FullMethodName    = "/wallet.v1.HoldService/Hold"
+	HoldService_Capture_FullMethodName = "/wallet.v1.HoldService/Capture"
+	HoldService_Release_FullMethodName = "/wallet.v1.HoldService/Release"
+)
+
+// HoldServiceClient is the client API for HoldService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// HoldService sets money aside for operations that take several steps, like
+// a transfer saga. Its callers are our services, so requests name the user
+// they act for. Every call is safe to repeat: the hold ID is the key.
+type HoldServiceClient interface {
+	// Hold moves money out of a wallet into a hold, if the wallet can cover it.
+	Hold(ctx context.Context, in *HoldRequest, opts ...grpc.CallOption) (*HoldResponse, error)
+	// Capture pays a hold into another wallet.
+	Capture(ctx context.Context, in *CaptureRequest, opts ...grpc.CallOption) (*CaptureResponse, error)
+	// Release gives a hold back to its wallet.
+	Release(ctx context.Context, in *ReleaseRequest, opts ...grpc.CallOption) (*ReleaseResponse, error)
+}
+
+type holdServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewHoldServiceClient(cc grpc.ClientConnInterface) HoldServiceClient {
+	return &holdServiceClient{cc}
+}
+
+func (c *holdServiceClient) Hold(ctx context.Context, in *HoldRequest, opts ...grpc.CallOption) (*HoldResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HoldResponse)
+	err := c.cc.Invoke(ctx, HoldService_Hold_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *holdServiceClient) Capture(ctx context.Context, in *CaptureRequest, opts ...grpc.CallOption) (*CaptureResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CaptureResponse)
+	err := c.cc.Invoke(ctx, HoldService_Capture_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *holdServiceClient) Release(ctx context.Context, in *ReleaseRequest, opts ...grpc.CallOption) (*ReleaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReleaseResponse)
+	err := c.cc.Invoke(ctx, HoldService_Release_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// HoldServiceServer is the server API for HoldService service.
+// All implementations must embed UnimplementedHoldServiceServer
+// for forward compatibility.
+//
+// HoldService sets money aside for operations that take several steps, like
+// a transfer saga. Its callers are our services, so requests name the user
+// they act for. Every call is safe to repeat: the hold ID is the key.
+type HoldServiceServer interface {
+	// Hold moves money out of a wallet into a hold, if the wallet can cover it.
+	Hold(context.Context, *HoldRequest) (*HoldResponse, error)
+	// Capture pays a hold into another wallet.
+	Capture(context.Context, *CaptureRequest) (*CaptureResponse, error)
+	// Release gives a hold back to its wallet.
+	Release(context.Context, *ReleaseRequest) (*ReleaseResponse, error)
+	mustEmbedUnimplementedHoldServiceServer()
+}
+
+// UnimplementedHoldServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedHoldServiceServer struct{}
+
+func (UnimplementedHoldServiceServer) Hold(context.Context, *HoldRequest) (*HoldResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Hold not implemented")
+}
+func (UnimplementedHoldServiceServer) Capture(context.Context, *CaptureRequest) (*CaptureResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Capture not implemented")
+}
+func (UnimplementedHoldServiceServer) Release(context.Context, *ReleaseRequest) (*ReleaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Release not implemented")
+}
+func (UnimplementedHoldServiceServer) mustEmbedUnimplementedHoldServiceServer() {}
+func (UnimplementedHoldServiceServer) testEmbeddedByValue()                     {}
+
+// UnsafeHoldServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to HoldServiceServer will
+// result in compilation errors.
+type UnsafeHoldServiceServer interface {
+	mustEmbedUnimplementedHoldServiceServer()
+}
+
+func RegisterHoldServiceServer(s grpc.ServiceRegistrar, srv HoldServiceServer) {
+	// If the following call panics, it indicates UnimplementedHoldServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&HoldService_ServiceDesc, srv)
+}
+
+func _HoldService_Hold_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HoldRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoldServiceServer).Hold(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HoldService_Hold_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoldServiceServer).Hold(ctx, req.(*HoldRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HoldService_Capture_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CaptureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoldServiceServer).Capture(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HoldService_Capture_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoldServiceServer).Capture(ctx, req.(*CaptureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HoldService_Release_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoldServiceServer).Release(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HoldService_Release_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoldServiceServer).Release(ctx, req.(*ReleaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// HoldService_ServiceDesc is the grpc.ServiceDesc for HoldService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var HoldService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "wallet.v1.HoldService",
+	HandlerType: (*HoldServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Hold",
+			Handler:    _HoldService_Hold_Handler,
+		},
+		{
+			MethodName: "Capture",
+			Handler:    _HoldService_Capture_Handler,
+		},
+		{
+			MethodName: "Release",
+			Handler:    _HoldService_Release_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "wallet/v1/wallet.proto",
+}

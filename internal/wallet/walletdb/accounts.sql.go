@@ -14,7 +14,7 @@ import (
 const createAccount = `-- name: CreateAccount :one
 INSERT INTO accounts (kind, owner_id, name, currency, normal_balance)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, owner_id, name, currency, normal_balance, created_at, kind
+RETURNING id, owner_id, name, currency, normal_balance, created_at, kind, frozen
 `
 
 type CreateAccountParams struct {
@@ -42,12 +42,13 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (A
 		&i.NormalBalance,
 		&i.CreatedAt,
 		&i.Kind,
+		&i.Frozen,
 	)
 	return i, err
 }
 
 const getAccount = `-- name: GetAccount :one
-SELECT id, owner_id, name, currency, normal_balance, created_at, kind FROM accounts
+SELECT id, owner_id, name, currency, normal_balance, created_at, kind, frozen FROM accounts
 WHERE id = $1
 `
 
@@ -62,6 +63,7 @@ func (q *Queries) GetAccount(ctx context.Context, id uuid.UUID) (Account, error)
 		&i.NormalBalance,
 		&i.CreatedAt,
 		&i.Kind,
+		&i.Frozen,
 	)
 	return i, err
 }
@@ -84,7 +86,7 @@ func (q *Queries) GetAccountBalance(ctx context.Context, accountID uuid.UUID) (A
 }
 
 const getSystemAccount = `-- name: GetSystemAccount :one
-SELECT id, owner_id, name, currency, normal_balance, created_at, kind FROM accounts
+SELECT id, owner_id, name, currency, normal_balance, created_at, kind, frozen FROM accounts
 WHERE kind = 'system' AND name = $1 AND currency = $2
 `
 
@@ -104,12 +106,13 @@ func (q *Queries) GetSystemAccount(ctx context.Context, arg GetSystemAccountPara
 		&i.NormalBalance,
 		&i.CreatedAt,
 		&i.Kind,
+		&i.Frozen,
 	)
 	return i, err
 }
 
 const listAccountsByOwner = `-- name: ListAccountsByOwner :many
-SELECT id, owner_id, name, currency, normal_balance, created_at, kind FROM accounts
+SELECT id, owner_id, name, currency, normal_balance, created_at, kind, frozen FROM accounts
 WHERE owner_id = $1::uuid
 ORDER BY created_at
 `
@@ -131,6 +134,7 @@ func (q *Queries) ListAccountsByOwner(ctx context.Context, ownerID uuid.UUID) ([
 			&i.NormalBalance,
 			&i.CreatedAt,
 			&i.Kind,
+			&i.Frozen,
 		); err != nil {
 			return nil, err
 		}
