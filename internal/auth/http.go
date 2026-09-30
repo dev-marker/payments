@@ -56,6 +56,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /v1/auth/refresh", httpx.HandlerFunc(h.refresh))
 	mux.Handle("POST /v1/auth/logout", httpx.HandlerFunc(h.logout))
 	mux.Handle("GET /v1/auth/me", h.verifier.Require(httpx.HandlerFunc(h.me)))
+	// For our own services: the gateway never routes /internal/ to us.
+	mux.Handle("GET /internal/users/{id}", httpx.HandlerFunc(h.user))
 }
 
 func (h *Handler) registerUser(w http.ResponseWriter, r *http.Request) error {
@@ -113,6 +115,21 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) error {
 // is one.
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) error {
 	id, _ := authn.UserID(r.Context())
+	u, err := h.svc.User(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, toUserResponse(u))
+	return nil
+}
+
+// user returns any user, by ID, for services like notification that only
+// know IDs. Until episode 21's mTLS, the network is what keeps users out.
+func (h *Handler) user(w http.ResponseWriter, r *http.Request) error {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		return ErrUserNotFound
+	}
 	u, err := h.svc.User(r.Context(), id)
 	if err != nil {
 		return err

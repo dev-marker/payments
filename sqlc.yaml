@@ -40,3 +40,12 @@ sql:
         out: internal/transfer/transferdb
         sql_package: pgx/v5
         overrides: *overrides
+  - engine: postgresql
+    schema: db/notification/migrations
+    queries: db/notification/queries
+    gen:
+      go:
+        package: notificationdb
+        out: internal/notification/notificationdb
+        sql_package: pgx/v5
+        overrides: *overrides

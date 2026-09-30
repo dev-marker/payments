@@ -31,5 +31,13 @@ services:
       - "4222:4222"
       - "8222:8222"
 
+  # Catches every email we send, in development. Its inbox: localhost:8025.
+  mailpit:
+    image: axllent/mailpit:v1.27
+    container_name: payments-mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
 volumes:
   pgdata:

@@ -3,3 +3,4 @@
 CREATE DATABASE wallet;
 CREATE DATABASE auth;
 CREATE DATABASE transfer;
+CREATE DATABASE notification;

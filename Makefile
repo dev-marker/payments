@@ -31,11 +31,12 @@ generate:
 WALLET_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/wallet?sslmode=disable
 AUTH_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/auth?sslmode=disable
 TRANSFER_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/transfer?sslmode=disable
+NOTIFICATION_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/notification?sslmode=disable
 # Redis database 1, so tests never touch the services' data in database 0.
 REDIS_TEST_URL ?= redis://localhost:6379/1
 # Tests create streams of their own, with random names, and delete them.
 NATS_TEST_URL ?= nats://localhost:4222
-export WALLET_TEST_DATABASE_URL AUTH_TEST_DATABASE_URL TRANSFER_TEST_DATABASE_URL REDIS_TEST_URL NATS_TEST_URL
+export WALLET_TEST_DATABASE_URL AUTH_TEST_DATABASE_URL TRANSFER_TEST_DATABASE_URL NOTIFICATION_TEST_DATABASE_URL REDIS_TEST_URL NATS_TEST_URL
 
 # Run part of the suite with PKGS=./internal/wallet TESTFLAGS='-run Transfer'.
 PKGS ?= ./...
@@ -43,7 +44,7 @@ PKGS ?= ./...
 test:
 	@go test -count=1 $(TESTFLAGS) $(PKGS)
 
-.PHONY: run-wallet run-auth run-transfer run-gateway keys
+.PHONY: run-wallet run-auth run-transfer run-notification dead-letters replay-dead-letters run-gateway keys
 
 # Run the wallet service against the local database, stamped with a git version.
 VERSION ?= $(shell git describe --always --dirty)
@@ -62,6 +63,23 @@ run-transfer:
 	@go build -ldflags "-X main.version=$(VERSION)" -o bin/transfer ./cmd/transfer
 	@TRANSFER_DATABASE_URL="postgres://payments:payments@localhost:5432/transfer?sslmode=disable" \
 		TRANSFER_AUTH_PUBLIC_KEY_FILE=secrets/auth_ed25519.pub.pem ./bin/transfer
+
+NOTIFICATION_DB_URL := postgres://payments:payments@localhost:5432/notification?sslmode=disable
+
+run-notification:
+	@go build -ldflags "-X main.version=$(VERSION)" -o bin/notification ./cmd/notification
+	@NOTIFICATION_DATABASE_URL="$(NOTIFICATION_DB_URL)" ./bin/notification
+
+# The messages the notification service gave up on, and why.
+dead-letters:
+	@docker compose exec -T postgres psql -U payments -d notification -c \
+		"SELECT stream, seq, deliveries, left(error, 70) AS error FROM dead_letters \
+		WHERE replayed_at IS NULL"
+
+# Once whatever broke them is fixed, send them again.
+replay-dead-letters:
+	@go build -ldflags "-X main.version=$(VERSION)" -o bin/notification ./cmd/notification
+	@NOTIFICATION_DATABASE_URL="$(NOTIFICATION_DB_URL)" ./bin/notification -replay-dead-letters
 
 # The public API on port 8080, in front of the others.
 run-gateway:

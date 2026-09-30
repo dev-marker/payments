@@ -73,6 +73,14 @@ Content-Type: application/json
 GET {{baseUrl}}{{transfer.response.headers.Location}}
 Authorization: Bearer {{token}}
 
+### Pay Bob a hundred dollars
+POST {{baseUrl}}/v1/transfers
+Authorization: Bearer {{token}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"from": "{{walletId}}", "to": "{{bobsWallet.response.body.id}}", "amount": 10000, "currency": "USD"}
+
 ### Balance
 GET {{baseUrl}}/v1/wallets/{{walletId}}/balance
 Authorization: Bearer {{token}}
