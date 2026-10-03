@@ -39,5 +39,44 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  # Traces: OTLP comes in on 4317 (gRPC) and 4318 (HTTP), and the UI is on
+  # 16686. It keeps traces in memory, which is plenty for development.
+  jaeger:
+    image: jaegertracing/jaeger:2.22.0
+    container_name: payments-jaeger
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "16686:16686"
+
+  # Metrics: it scrapes every service's /metrics. Its UI is on 9090.
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    container_name: payments-prometheus
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    # Our services run on the host, outside Docker. Docker Desktop knows
+    # this name; on Linux, it needs this line.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Dashboards, on port 3000. Its data sources and dashboards come from
+  # files, so nothing is ever clicked together by hand.
+  grafana:
+    image: grafana/grafana:13.2.6
+    container_name: payments-grafana
+    environment:
+      # Development only: no login, and everyone is an admin.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+
 volumes:
   pgdata:

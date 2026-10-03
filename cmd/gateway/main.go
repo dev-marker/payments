@@ -16,7 +16,9 @@ import (
 	"github.com/fiston-user/payments/internal/platform/config"
 	"github.com/fiston-user/payments/internal/platform/logging"
 	"github.com/fiston-user/payments/internal/platform/redis"
+	"github.com/fiston-user/payments/internal/platform/telemetry"
 	"github.com/fiston-user/payments/internal/wallet/walletclient"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // version is stamped at build time: go build -ldflags "-X main.version=v1.2.3".
@@ -37,6 +39,14 @@ func main() {
 	})
 	slog.SetDefault(logger)
 	logger.Info("starting", "env", cfg.Env, "log_level", cfg.LogLevel.String())
+
+	// Traces go to the collector in OTEL_EXPORTER_OTLP_ENDPOINT, if there is one.
+	stopTracing, err := telemetry.Setup(context.Background(),
+		telemetry.Options{Service: "gateway", Version: version, Env: cfg.Env})
+	if err != nil {
+		logger.Error("telemetry", "err", err)
+		os.Exit(1)
+	}
 
 	pub, err := authn.ReadPublicKey(cfg.PublicKeyFile)
 	if err != nil {
@@ -81,6 +91,17 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Our metrics, on a port of their own: the gateway's port faces the internet.
+	metrics := &http.Server{
+		Addr: cfg.MetricsAddr, Handler: promhttp.Handler(), ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		if err := metrics.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("metrics server failed", "err", err)
+			os.Exit(1)
+		}
+	}()
+
 	go func() {
 		logger.Info("gateway listening", "addr", srv.Addr,
 			"auth", cfg.AuthURL.String(), "wallet", cfg.WalletAddr, "transfer", cfg.TransferURL.String())
@@ -98,9 +119,14 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("shutdown failed", "err", err)
 	}
+	metrics.Shutdown(shutdownCtx)
 	logger.Info("server stopped")
 
 	wallet.Close()
 	rdb.Close()
 	logger.Info("wallet and redis clients closed")
+	// Last, the spans still waiting in the batch, from everything that stopped.
+	if err := stopTracing(shutdownCtx); err != nil {
+		logger.Error("flush traces", "err", err)
+	}
 }

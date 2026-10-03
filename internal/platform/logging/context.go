@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"slices"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 type attrsKey struct{}
@@ -24,6 +26,12 @@ type contextHandler struct {
 func (h contextHandler) Handle(ctx context.Context, r slog.Record) error {
 	if attrs, ok := ctx.Value(attrsKey{}).([]slog.Attr); ok {
 		r.AddAttrs(attrs...)
+	}
+	// The trace this line belongs to: search for its ID in Jaeger, or in the
+	// logs of every service.
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		r.AddAttrs(slog.String("trace_id", sc.TraceID().String()),
+			slog.String("span_id", sc.SpanID().String()))
 	}
 	return h.Handler.Handle(ctx, r)
 }

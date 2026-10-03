@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -58,4 +60,12 @@ func EnsureStream(ctx context.Context, js jetstream.JetStream, cfg jetstream.Str
 	slog.InfoContext(ctx, "stream ready", "stream", cfg.Name, "subjects", cfg.Subjects,
 		"messages", stream.CachedInfo().State.Msgs)
 	return nil
+}
+
+// HeaderCarrier lets OpenTelemetry read and write a message's headers: Get
+// and Set come with nats.Header, and Keys lists them.
+type HeaderCarrier struct{ nats.Header }
+
+func (c HeaderCarrier) Keys() []string {
+	return slices.Collect(maps.Keys(c.Header))
 }

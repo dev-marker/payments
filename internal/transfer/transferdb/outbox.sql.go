@@ -9,21 +9,28 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 const insertOutboxEvent = `-- name: InsertOutboxEvent :exec
-INSERT INTO outbox (event_id, subject, payload)
-VALUES ($1, $2, $3)
+INSERT INTO outbox (event_id, subject, payload, trace_context)
+VALUES ($1, $2, $3, $4)
 `
 
 type InsertOutboxEventParams struct {
-	EventID uuid.UUID
-	Subject string
-	Payload []byte
+	EventID      uuid.UUID
+	Subject      string
+	Payload      []byte
+	TraceContext propagation.MapCarrier
 }
 
 // Must run in the transaction that made the event happen.
 func (q *Queries) InsertOutboxEvent(ctx context.Context, arg InsertOutboxEventParams) error {
-	_, err := q.db.Exec(ctx, insertOutboxEvent, arg.EventID, arg.Subject, arg.Payload)
+	_, err := q.db.Exec(ctx, insertOutboxEvent,
+		arg.EventID,
+		arg.Subject,
+		arg.Payload,
+		arg.TraceContext,
+	)
 	return err
 }

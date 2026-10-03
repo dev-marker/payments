@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 const advanceTransfer = `-- name: AdvanceTransfer :one
@@ -17,7 +18,7 @@ UPDATE transfers
 SET state = $1, failure_reason = $2, attempts = 0,
     next_attempt_at = now(), version = version + 1, updated_at = now()
 WHERE id = $3 AND state = $4 AND version = $5
-RETURNING id, user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, state, failure_reason, attempts, next_attempt_at, version, created_at, updated_at
+RETURNING id, user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, state, failure_reason, attempts, next_attempt_at, version, created_at, updated_at, trace_context
 `
 
 type AdvanceTransferParams struct {
@@ -53,6 +54,7 @@ func (q *Queries) AdvanceTransfer(ctx context.Context, arg AdvanceTransferParams
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TraceContext,
 	)
 	return i, err
 }
@@ -68,7 +70,7 @@ WHERE id IN (
     LIMIT $2
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, state, failure_reason, attempts, next_attempt_at, version, created_at, updated_at
+RETURNING id, user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, state, failure_reason, attempts, next_attempt_at, version, created_at, updated_at, trace_context
 `
 
 type ClaimTransfersParams struct {
@@ -101,6 +103,7 @@ func (q *Queries) ClaimTransfers(ctx context.Context, arg ClaimTransfersParams) 
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TraceContext,
 		); err != nil {
 			return nil, err
 		}
@@ -113,10 +116,10 @@ func (q *Queries) ClaimTransfers(ctx context.Context, arg ClaimTransfersParams) 
 }
 
 const createTransfer = `-- name: CreateTransfer :one
-INSERT INTO transfers (user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO transfers (user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, trace_context)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (user_id, idempotency_key) DO NOTHING
-RETURNING id, user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, state, failure_reason, attempts, next_attempt_at, version, created_at, updated_at
+RETURNING id, user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, state, failure_reason, attempts, next_attempt_at, version, created_at, updated_at, trace_context
 `
 
 type CreateTransferParams struct {
@@ -126,6 +129,7 @@ type CreateTransferParams struct {
 	ToWalletID     uuid.UUID
 	Amount         int64
 	Currency       string
+	TraceContext   propagation.MapCarrier
 }
 
 // Returns no row when the user already used this idempotency key.
@@ -137,6 +141,7 @@ func (q *Queries) CreateTransfer(ctx context.Context, arg CreateTransferParams) 
 		arg.ToWalletID,
 		arg.Amount,
 		arg.Currency,
+		arg.TraceContext,
 	)
 	var i Transfer
 	err := row.Scan(
@@ -154,12 +159,13 @@ func (q *Queries) CreateTransfer(ctx context.Context, arg CreateTransferParams) 
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TraceContext,
 	)
 	return i, err
 }
 
 const getTransfer = `-- name: GetTransfer :one
-SELECT id, user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, state, failure_reason, attempts, next_attempt_at, version, created_at, updated_at FROM transfers
+SELECT id, user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, state, failure_reason, attempts, next_attempt_at, version, created_at, updated_at, trace_context FROM transfers
 WHERE id = $1
 `
 
@@ -181,12 +187,13 @@ func (q *Queries) GetTransfer(ctx context.Context, id uuid.UUID) (Transfer, erro
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TraceContext,
 	)
 	return i, err
 }
 
 const getTransferByKey = `-- name: GetTransferByKey :one
-SELECT id, user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, state, failure_reason, attempts, next_attempt_at, version, created_at, updated_at FROM transfers
+SELECT id, user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, state, failure_reason, attempts, next_attempt_at, version, created_at, updated_at, trace_context FROM transfers
 WHERE user_id = $1 AND idempotency_key = $2
 `
 
@@ -213,6 +220,7 @@ func (q *Queries) GetTransferByKey(ctx context.Context, arg GetTransferByKeyPara
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TraceContext,
 	)
 	return i, err
 }

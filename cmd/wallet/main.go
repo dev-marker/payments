@@ -24,9 +24,11 @@ import (
 	"github.com/fiston-user/payments/internal/platform/outbox"
 	"github.com/fiston-user/payments/internal/platform/postgres"
 	"github.com/fiston-user/payments/internal/platform/redis"
+	"github.com/fiston-user/payments/internal/platform/telemetry"
 	"github.com/fiston-user/payments/internal/wallet"
 	"github.com/fiston-user/payments/internal/wallet/walletevents"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
@@ -52,12 +54,21 @@ func main() {
 	slog.SetDefault(logger)
 	logger.Info("starting", "env", cfg.Env, "log_level", cfg.LogLevel.String())
 
+	// Traces go to the collector in OTEL_EXPORTER_OTLP_ENDPOINT, if there is one.
+	stopTracing, err := telemetry.Setup(context.Background(),
+		telemetry.Options{Service: "wallet", Version: version, Env: cfg.Env})
+	if err != nil {
+		logger.Error("telemetry", "err", err)
+		os.Exit(1)
+	}
+
 	pool, err := postgres.NewPool(context.Background(), cfg.DatabaseURL, int32(cfg.DBMaxConns))
 	if err != nil {
 		logger.Error("connect to postgres", "err", err)
 		os.Exit(1)
 	}
 	logger.Info("connected to postgres", "max_conns", pool.Config().MaxConns)
+	outbox.RegisterMetrics(pool)
 
 	// Redis is only a cache in front of Postgres. If it's down, we start
 	// anyway, without the cache, and use it as soon as it's back.
@@ -113,6 +124,8 @@ func main() {
 		}
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ready"})
 	})
+	// For Prometheus, which scrapes it every few seconds. The gateway never routes it.
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	// The wallet API, where every route needs an access token, and a JSON 404
 	// for everything else.
@@ -121,7 +134,7 @@ func main() {
 	api := http.NewServeMux()
 	wallet.NewHandler(svc, keys).Register(api)
 	api.HandleFunc("/", httpx.NotFound)
-	mux.Handle("/v1/", verifier.Require(api))
+	mux.Handle("/v1/", verifier.Require(httpx.Routes(api)))
 	mux.HandleFunc("/", httpx.NotFound)
 
 	// The same service, over gRPC, for our other services. Every RPC needs an
@@ -144,7 +157,8 @@ func main() {
 
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: httpx.Chain(mux,
+		Handler: httpx.Chain(httpx.Routes(mux),
+			httpx.Observe(),
 			httpx.RequestID,
 			httpx.AccessLog(logger),
 			httpx.Recover(logger),
@@ -215,4 +229,8 @@ func main() {
 	pool.Close()
 	rdb.Close()
 	logger.Info("nats, database pool and redis client closed")
+	// Last, the spans still waiting in the batch, from everything that stopped.
+	if err := stopTracing(shutdownCtx); err != nil {
+		logger.Error("flush traces", "err", err)
+	}
 }

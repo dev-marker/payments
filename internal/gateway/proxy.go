@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fiston-user/payments/internal/platform/httpx"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // newProxy returns a reverse proxy to the service at target, like
@@ -23,14 +24,15 @@ func newProxy(target *url.URL) *httputil.ReverseProxy {
 			pr.SetXForwarded()
 			pr.Out.Header.Set(httpx.RequestIDHeader, httpx.RequestIDFrom(pr.In.Context()))
 		},
-		Transport: &http.Transport{
+		// A span for each call upstream, and the trace context in its headers.
+		Transport: otelhttp.NewTransport(&http.Transport{
 			DialContext: (&net.Dialer{Timeout: 2 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 			// The default keeps only two idle connections per host.
 			MaxIdleConns:          100,
 			MaxIdleConnsPerHost:   100,
 			IdleConnTimeout:       90 * time.Second,
 			ResponseHeaderTimeout: 10 * time.Second,
-		},
+		}),
 		// Our RequestID middleware already set it: don't send it twice.
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Del(httpx.RequestIDHeader)

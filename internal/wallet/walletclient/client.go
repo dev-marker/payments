@@ -10,6 +10,7 @@ import (
 
 	walletv1 "github.com/fiston-user/payments/gen/wallet/v1"
 	"github.com/fiston-user/payments/internal/platform/grpcx"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -67,6 +68,7 @@ func New(target string, timeout time.Duration, opts ...grpc.DialOption) (*Client
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultServiceConfig(serviceConfig),
 		grpc.WithChainUnaryInterceptor(grpcx.PropagateRequestID, deadline(timeout)),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()), // a span per call, and the context
 	}, opts...)
 	// NewClient doesn't connect yet: the first call does, and gRPC
 	// reconnects by itself whenever it has to.

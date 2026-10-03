@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 type AccountKind string
@@ -223,12 +224,13 @@ type IdempotencyKey struct {
 }
 
 type Outbox struct {
-	Seq         int64              `json:"seq"`
-	EventID     uuid.UUID          `json:"event_id"`
-	Subject     string             `json:"subject"`
-	Payload     []byte             `json:"payload"`
-	CreatedAt   time.Time          `json:"created_at"`
-	PublishedAt pgtype.Timestamptz `json:"published_at"`
+	Seq          int64                  `json:"seq"`
+	EventID      uuid.UUID              `json:"event_id"`
+	Subject      string                 `json:"subject"`
+	Payload      []byte                 `json:"payload"`
+	CreatedAt    time.Time              `json:"created_at"`
+	PublishedAt  pgtype.Timestamptz     `json:"published_at"`
+	TraceContext propagation.MapCarrier `json:"trace_context"`
 }
 
 type Transaction struct {

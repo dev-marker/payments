@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fiston-user/payments/internal/platform/httpx"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -24,7 +25,12 @@ func NewServer(logger *slog.Logger, interceptors ...grpc.UnaryServerInterceptor)
 	chain := append([]grpc.UnaryServerInterceptor{
 		RequestID, Log(logger), Recover(logger), Errors,
 	}, interceptors...)
-	return grpc.NewServer(grpc.ChainUnaryInterceptor(chain...))
+	// The stats handler traces every RPC, and runs before any interceptor, so
+	// they all see the span.
+	return grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.ChainUnaryInterceptor(chain...),
+	)
 }
 
 // RequestID gives every RPC a request ID: the one the caller sent, if it's

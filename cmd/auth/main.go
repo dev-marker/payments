@@ -17,6 +17,8 @@ import (
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/logging"
 	"github.com/fiston-user/payments/internal/platform/postgres"
+	"github.com/fiston-user/payments/internal/platform/telemetry"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // version is stamped at build time: go build -ldflags "-X main.version=v1.2.3".
@@ -38,6 +40,14 @@ func main() {
 	// Code that logs through the slog package functions gets our logger too.
 	slog.SetDefault(logger)
 	logger.Info("starting", "env", cfg.Env, "log_level", cfg.LogLevel.String())
+
+	// Traces go to the collector in OTEL_EXPORTER_OTLP_ENDPOINT, if there is one.
+	stopTracing, err := telemetry.Setup(context.Background(),
+		telemetry.Options{Service: "auth", Version: version, Env: cfg.Env})
+	if err != nil {
+		logger.Error("telemetry", "err", err)
+		os.Exit(1)
+	}
 
 	pool, err := postgres.NewPool(context.Background(), cfg.DatabaseURL, int32(cfg.DBMaxConns))
 	if err != nil {
@@ -69,6 +79,8 @@ func main() {
 		}
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ready"})
 	})
+	// For Prometheus, which scrapes it every few seconds. The gateway never routes it.
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	// The auth API, and a JSON 404 for everything else.
 	svc := auth.NewService(pool, signer, cfg.RefreshTTL)
@@ -77,7 +89,8 @@ func main() {
 
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: httpx.Chain(mux,
+		Handler: httpx.Chain(httpx.Routes(mux),
+			httpx.Observe(),
 			httpx.RequestID,
 			httpx.AccessLog(logger),
 			httpx.Recover(logger),
@@ -111,4 +124,8 @@ func main() {
 	// Close the pool last: requests that were still finishing needed it.
 	pool.Close()
 	logger.Info("database pool closed")
+	// Last, the spans still waiting in the batch, from everything that stopped.
+	if err := stopTracing(shutdownCtx); err != nil {
+		logger.Error("flush traces", "err", err)
+	}
 }

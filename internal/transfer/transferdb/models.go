@@ -9,15 +9,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 type Outbox struct {
-	Seq         int64
-	EventID     uuid.UUID
-	Subject     string
-	Payload     []byte
-	CreatedAt   time.Time
-	PublishedAt pgtype.Timestamptz
+	Seq          int64
+	EventID      uuid.UUID
+	Subject      string
+	Payload      []byte
+	CreatedAt    time.Time
+	PublishedAt  pgtype.Timestamptz
+	TraceContext propagation.MapCarrier
 }
 
 type Transfer struct {
@@ -35,6 +37,7 @@ type Transfer struct {
 	Version        int32
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	TraceContext   propagation.MapCarrier
 }
 
 type TransferStep struct {

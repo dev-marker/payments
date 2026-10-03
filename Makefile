@@ -49,6 +49,10 @@ test:
 # Run the wallet service against the local database, stamped with a git version.
 VERSION ?= $(shell git describe --always --dirty)
 
+# Every service sends its traces to Jaeger, over OTLP. Tests don't: without
+# the variable, tracing is off.
+run-%: export OTEL_EXPORTER_OTLP_ENDPOINT = http://localhost:4318
+
 run-wallet:
 	@go build -ldflags "-X main.version=$(VERSION)" -o bin/wallet ./cmd/wallet
 	@WALLET_DATABASE_URL="$(DB_URL)" \

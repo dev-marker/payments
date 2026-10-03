@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fiston-user/payments/internal/platform/events"
+	"github.com/fiston-user/payments/internal/platform/telemetry"
 	"github.com/fiston-user/payments/internal/transfer/transferdb"
 	"github.com/fiston-user/payments/internal/transfer/transferevents"
 	"github.com/google/uuid"
@@ -29,6 +30,8 @@ func NewStore(pool *pgxpool.Pool) *Store {
 // Create stores a pending transfer, once per idempotency key. If the key was
 // used before, it returns that transfer, and false.
 func (s *Store) Create(ctx context.Context, nt NewTransfer) (Transfer, bool, error) {
+	// The saga runs later, in steps that continue this request's trace.
+	nt.TraceContext = telemetry.Carry(ctx)
 	row, err := s.q.CreateTransfer(ctx, nt)
 	if err == nil {
 		return fromRow(row), true, nil
@@ -177,5 +180,7 @@ func enqueue(ctx context.Context, q *transferdb.Queries, t Transfer) error {
 		EventID: evt.ID,
 		Subject: transferevents.Subject(typ),
 		Payload: payload,
+		// The trace of the step that finished the saga.
+		TraceContext: telemetry.Carry(ctx),
 	})
 }

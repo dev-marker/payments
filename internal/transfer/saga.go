@@ -7,6 +7,11 @@ import (
 	"math/rand/v2"
 	"sync"
 	"time"
+
+	"github.com/fiston-user/payments/internal/platform/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // The saga, as data: in each state, the step to run, where success leads,
@@ -87,6 +92,10 @@ func (o *Orchestrator) RunOnce(ctx context.Context) (int, error) {
 // step runs t's next step, and moves t on, or schedules a retry.
 func (o *Orchestrator) step(ctx context.Context, t Transfer) {
 	s := saga[t.State]
+	// Each step is a span in the trace of the request that created t.
+	ctx, span := tracer.Start(telemetry.Extract(ctx, t.traceContext), "saga "+s.name,
+		trace.WithAttributes(attribute.String("transfer.id", t.ID.String())))
+	defer span.End()
 	log := o.logger.With("transfer", t.ID, "step", s.name)
 	err := s.run(o.wallet, ctx, t)
 	var rejection *Rejection
@@ -94,25 +103,29 @@ func (o *Orchestrator) step(ctx context.Context, t Transfer) {
 	case err == nil:
 		t, err = o.store.Advance(ctx, t, s.next, Step{s.name, "succeeded", ""})
 		if err == nil {
-			log.Info("step succeeded", "state", t.State)
+			log.InfoContext(ctx, "step succeeded", "state", t.State)
+			finished(t)
 		}
 	case errors.As(err, &rejection) && s.rejected != "":
 		t.FailureReason = rejection.Reason
 		t, err = o.store.Advance(ctx, t, s.rejected, Step{s.name, "rejected", rejection.Reason})
 		if err == nil {
-			log.Warn("step rejected", "reason", t.FailureReason, "state", t.State)
+			log.WarnContext(ctx, "step rejected", "reason", t.FailureReason, "state", t.State)
+			finished(t)
 		}
 	default:
 		// Maybe next time. A timeout doesn't mean it didn't happen: the
 		// retry is the same idempotent call.
 		delay := o.backoff(t.attempts)
-		log.Warn("step failed, retrying", "attempt", t.attempts+1, "in", delay, "err", err)
+		log.WarnContext(ctx, "step failed, retrying", "attempt", t.attempts+1, "in", delay, "err", err)
+		span.SetStatus(codes.Error, err.Error())
+		stepRetries.WithLabelValues(s.name).Inc()
 		err = o.store.Retry(ctx, t, Step{s.name, "failed", err.Error()}, time.Now().Add(delay))
 	}
 	if errors.Is(err, ErrStale) {
-		log.Info("transfer moved on without us")
+		log.InfoContext(ctx, "transfer moved on without us")
 	} else if err != nil {
-		log.Error("record step", "err", err) // the lease runs out: it runs again
+		log.ErrorContext(ctx, "record step", "err", err) // the lease runs out: it runs again
 	}
 }
 

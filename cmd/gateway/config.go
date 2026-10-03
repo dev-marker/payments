@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Env             string // development or production
 	HTTPAddr        string
+	MetricsAddr     string // internal only: never exposed to the internet
 	ShutdownTimeout time.Duration
 	LogLevel        slog.Level
 	LogFormat       string
@@ -33,6 +34,7 @@ func loadConfig(env *config.Env) (Config, error) {
 	c := Config{
 		Env:             env.OneOf("APP_ENV", "development", "development", "production"),
 		HTTPAddr:        env.String("GATEWAY_HTTP_ADDR", ":8080"),
+		MetricsAddr:     env.String("GATEWAY_METRICS_ADDR", ":9080"),
 		ShutdownTimeout: env.Duration("GATEWAY_SHUTDOWN_TIMEOUT", 10*time.Second),
 		LogLevel:        config.Parse(env, "LOG_LEVEL", slog.LevelInfo, logging.ParseLevel),
 		WalletAddr:      env.String("GATEWAY_WALLET_ADDR", "dns:///localhost:9081"),

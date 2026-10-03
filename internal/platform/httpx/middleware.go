@@ -57,6 +57,10 @@ func (w *statusRecorder) Unwrap() http.ResponseWriter {
 func AccessLog(logger *slog.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if quiet(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			start := time.Now()
 			rec := &statusRecorder{ResponseWriter: w}
 			next.ServeHTTP(rec, r)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/fiston-user/payments/internal/platform/events"
+	"github.com/fiston-user/payments/internal/platform/telemetry"
 	"github.com/fiston-user/payments/internal/wallet/walletdb"
 	"github.com/fiston-user/payments/internal/wallet/walletevents"
 	"github.com/google/uuid"
@@ -27,6 +28,8 @@ func enqueue(ctx context.Context, q *walletdb.Queries, typ string, aggregate uui
 		EventID: evt.ID,
 		Subject: walletevents.Subject(typ),
 		Payload: payload,
+		// The trace this event belongs to: the relay continues it.
+		TraceContext: telemetry.Carry(ctx),
 	})
 	if err != nil {
 		return fmt.Errorf("enqueue event %s: %w", typ, err)

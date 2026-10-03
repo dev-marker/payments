@@ -10,8 +10,23 @@ import (
 
 	"github.com/fiston-user/payments/internal/notification/notificationdb"
 	"github.com/fiston-user/payments/internal/platform/logging"
+	"github.com/fiston-user/payments/internal/platform/natsx"
+	"github.com/fiston-user/payments/internal/platform/telemetry"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var tracer = otel.Tracer("github.com/fiston-user/payments/internal/notification")
+
+// deadLetters should stay at zero. When it moves, someone should look.
+var deadLetters = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "notification_dead_letters_total",
+	Help: "Messages we gave up on, and wrote to the dead letters table.",
+})
 
 // ackWait is how long the server waits for our answer before it delivers a
 // message again. Handling one gets half of it.
@@ -51,8 +66,16 @@ func (n *Notifier) handle(msg jetstream.Msg) {
 	defer cancel()
 	ctx = logging.With(ctx, slog.String("stream", meta.Stream),
 		slog.Uint64("seq", meta.Sequence.Stream), slog.Uint64("delivery", meta.NumDelivered))
+	// The trace goes on from the relay that published it: every delivery is
+	// a span of its own, so retries show up in the trace too.
+	ctx, span := tracer.Start(telemetry.Extract(ctx, natsx.HeaderCarrier{Header: msg.Headers()}),
+		"process "+msg.Subject(), trace.WithSpanKind(trace.SpanKindConsumer))
+	defer span.End()
 
 	err = n.process(ctx, msg.Data())
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+	}
 	var permanent *PermanentError
 	switch {
 	case err == nil:
@@ -85,6 +108,7 @@ func (n *Notifier) deadLetter(ctx context.Context, msg jetstream.Msg, cause erro
 		msg.Nak()
 		return
 	}
+	deadLetters.Inc()
 	msg.Term()
 }
 

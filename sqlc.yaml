@@ -22,6 +22,9 @@ sql:
               pointer: true
           - db_type: timestamptz
             go_type: time.Time
+          # Trace context columns come out as OpenTelemetry's own carrier.
+          - column: "*.trace_context"
+            go_type: go.opentelemetry.io/otel/propagation.MapCarrier
   - engine: postgresql
     schema: db/auth/migrations
     queries: db/auth/queries

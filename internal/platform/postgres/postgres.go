@@ -29,6 +29,8 @@ func NewPool(ctx context.Context, dsn string, maxConns int32) (*pgxpool.Pool, er
 	cfg.MaxConnIdleTime = 15 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
 	cfg.ConnConfig.ConnectTimeout = 5 * time.Second
+	// A span for every query, in the trace that ran it.
+	cfg.ConnConfig.Tracer = queryTracer{}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

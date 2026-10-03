@@ -1,7 +1,7 @@
 -- name: CreateTransfer :one
 -- Returns no row when the user already used this idempotency key.
-INSERT INTO transfers (user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO transfers (user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, trace_context)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (user_id, idempotency_key) DO NOTHING
 RETURNING *;
 

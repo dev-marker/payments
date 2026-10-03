@@ -9,6 +9,9 @@ import (
 	"net/smtp"
 	"net/textproto"
 	"time"
+
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // A Sender delivers messages. In production it's an email provider's API;
@@ -26,7 +29,13 @@ type SMTP struct {
 // Send sends m. A 5xx reply, like "no such mailbox", is permanent. Anything
 // else, like a server that's down, might work later.
 func (s SMTP) Send(ctx context.Context, m Message) error {
+	// No library traces net/smtp for us, so we make the span ourselves.
+	ctx, span := tracer.Start(ctx, "smtp send", trace.WithSpanKind(trace.SpanKindClient))
+	defer span.End()
 	err := s.send(ctx, m)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+	}
 	var reply *textproto.Error
 	if errors.As(err, &reply) && reply.Code >= 500 {
 		return Permanent(err)

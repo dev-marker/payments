@@ -13,6 +13,7 @@ import (
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/wallet/walletclient"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Config is what the gateway needs: services, token checks and limits.
@@ -70,7 +71,11 @@ func New(cfg Config) http.Handler {
 	mux.Handle("GET /v1/transfers/{id}", private(transferTimeout, transfers))
 	mux.HandleFunc("/", httpx.NotFound)
 
-	return httpx.Chain(mux,
+	// Observe goes first. We face the internet, so a client's trace context
+	// is only linked, never continued: nobody outside decides what we sample.
+	edge := otelhttp.WithPublicEndpointFn(func(*http.Request) bool { return true })
+	return httpx.Chain(httpx.Routes(mux),
+		httpx.Observe(edge),
 		httpx.RequestID,
 		httpx.AccessLog(cfg.Logger),
 		httpx.Recover(cfg.Logger),

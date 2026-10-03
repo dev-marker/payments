@@ -9,12 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fiston-user/payments/internal/platform/natsx"
 	"github.com/fiston-user/payments/internal/platform/outbox"
 	"github.com/fiston-user/payments/internal/platform/postgres"
+	"github.com/fiston-user/payments/internal/platform/telemetry"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // newOutbox returns a pool of one connection, with an outbox of its own: a
@@ -110,6 +113,42 @@ func TestRelay(t *testing.T) {
 	publish(1)
 	// JetStream recognised every Nats-Msg-Id: still three messages, not six.
 	expectStream(t, stream, ids)
+}
+
+// The trace an event was written in goes on in its message's headers, with
+// tracing off, as in every test: the context travels all the same.
+func TestRelayContinuesTrace(t *testing.T) {
+	t.Parallel()
+	pool := newOutbox(t)
+	js, stream, prefix := newStream(t)
+	if _, err := telemetry.Setup(t.Context(), telemetry.Options{}); err != nil {
+		t.Fatalf("telemetry: %v", err)
+	}
+	// The span of the request that wrote the event.
+	written := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{0x4b, 0xf9, 0x2f, 0x35},
+		SpanID:     trace.SpanID{0x00, 0xf0, 0x67},
+		TraceFlags: trace.FlagsSampled,
+	})
+	carrier := telemetry.Carry(trace.ContextWithSpanContext(t.Context(), written))
+	_, err := pool.Exec(t.Context(), `INSERT INTO outbox (event_id, subject, payload, trace_context)
+		VALUES ($1, $2, '{}', $3)`, uuid.New(), prefix+".test", carrier)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	relay := outbox.NewRelay(pool, js, slog.New(slog.DiscardHandler))
+	if n, err := relay.PublishBatch(t.Context()); n != 1 || err != nil {
+		t.Fatalf("PublishBatch = %d, %v; want 1, nil", n, err)
+	}
+	msg, err := stream.GetMsg(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("get message: %v", err)
+	}
+	ctx := telemetry.Extract(t.Context(), natsx.HeaderCarrier{Header: msg.Header})
+	if got := trace.SpanContextFromContext(ctx).TraceID(); got != written.TraceID() {
+		t.Errorf("message's trace ID is %s, want %s", got, written.TraceID())
+	}
 }
 
 // expectStream checks that the stream holds exactly the events ids, in order.

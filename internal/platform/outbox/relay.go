@@ -9,11 +9,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fiston-user/payments/internal/platform/natsx"
+	"github.com/fiston-user/payments/internal/platform/telemetry"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var tracer = otel.Tracer("github.com/fiston-user/payments/internal/platform/outbox")
 
 // A Relay publishes the events in the outbox table to JetStream, oldest
 // first, and marks them published. That's two writes again, so a crash in
@@ -34,10 +43,11 @@ func NewRelay(pool *pgxpool.Pool, js jetstream.JetStream, logger *slog.Logger) *
 
 // message is an outbox row, waiting to be published.
 type message struct {
-	Seq     int64
-	EventID uuid.UUID
-	Subject string
-	Payload []byte
+	Seq          int64
+	EventID      uuid.UUID
+	Subject      string
+	Payload      []byte
+	TraceContext propagation.MapCarrier
 }
 
 // PublishBatch publishes up to BatchSize events, and returns how many.
@@ -52,7 +62,7 @@ func (r *Relay) PublishBatch(ctx context.Context) (int, error) {
 	// another relay has locked, so several instances share the work, and
 	// never publish the same rows at the same time.
 	rows, _ := tx.Query(ctx, `
-		SELECT seq, event_id, subject, payload FROM outbox
+		SELECT seq, event_id, subject, payload, trace_context FROM outbox
 		WHERE published_at IS NULL
 		ORDER BY seq
 		LIMIT $1
@@ -65,11 +75,8 @@ func (r *Relay) PublishBatch(ctx context.Context) (int, error) {
 	var published []int64
 	var pubErr error
 	for _, m := range batch {
-		_, pubErr = r.js.Publish(ctx, m.Subject, m.Payload, jetstream.WithMsgID(m.EventID.String()))
-		if pubErr != nil {
-			// Stop here, so no event overtakes this one.
-			pubErr = fmt.Errorf("outbox: publish %s: %w", m.EventID, pubErr)
-			break
+		if pubErr = r.publish(ctx, m); pubErr != nil {
+			break // stop here, so no event overtakes this one
 		}
 		published = append(published, m.Seq)
 	}
@@ -85,6 +92,21 @@ func (r *Relay) PublishBatch(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("outbox: mark published: %w", err)
 	}
 	return len(published), pubErr
+}
+
+// publish sends m to JetStream, in a span that continues the trace m was
+// written in, and passes that trace on in the message's headers.
+func (r *Relay) publish(ctx context.Context, m message) error {
+	ctx, span := tracer.Start(telemetry.Extract(ctx, m.TraceContext), "publish "+m.Subject,
+		trace.WithSpanKind(trace.SpanKindProducer))
+	defer span.End()
+	msg := &nats.Msg{Subject: m.Subject, Data: m.Payload, Header: nats.Header{}}
+	telemetry.Inject(ctx, natsx.HeaderCarrier{Header: msg.Header})
+	if _, err := r.js.PublishMsg(ctx, msg, jetstream.WithMsgID(m.EventID.String())); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("outbox: publish %s: %w", m.EventID, err)
+	}
+	return nil
 }
 
 // Run publishes events until ctx is canceled. After a full batch, it goes

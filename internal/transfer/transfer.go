@@ -8,6 +8,7 @@ import (
 	"github.com/fiston-user/payments/internal/platform/apperr"
 	"github.com/fiston-user/payments/internal/transfer/transferdb"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // Transfer is money moving between two wallets, and where it's at.
@@ -23,8 +24,9 @@ type Transfer struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 
-	attempts int32 // tries of the current step
-	version  int32 // the row's version, as we read it
+	attempts     int32                  // tries of the current step
+	version      int32                  // the row's version, as we read it
+	traceContext propagation.MapCarrier // the trace of the request that created it
 }
 
 func fromRow(r transferdb.Transfer) Transfer {
@@ -33,7 +35,7 @@ func fromRow(r transferdb.Transfer) Transfer {
 		Amount: r.Amount, Currency: r.Currency,
 		State: State(r.State), FailureReason: r.FailureReason,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-		attempts: r.Attempts, version: r.Version,
+		attempts: r.Attempts, version: r.Version, traceContext: r.TraceContext,
 	}
 }
 

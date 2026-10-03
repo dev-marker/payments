@@ -1,0 +1,34 @@
+{
+  "uid": "payments",
+  "title": "Payments",
+  "refresh": "5s",
+  "time": {"from": "now-10m", "to": "now"},
+  "panels": [
+    {"title": "Requests per second", "type": "timeseries",
+     "gridPos": {"x": 0, "y": 0, "w": 8, "h": 9}, "fieldConfig": {"defaults": {"unit": "reqps"}},
+     "targets": [{"legendFormat": "{{service}}", "expr":
+      "sum by (service) (rate(http_request_duration_seconds_count[1m]))"}]},
+    {"title": "Server errors per second", "type": "timeseries",
+     "gridPos": {"x": 8, "y": 0, "w": 8, "h": 9}, "fieldConfig": {"defaults": {"unit": "reqps"}},
+     "targets": [{"legendFormat": "{{service}}", "expr":
+      "sum by (service) (rate(http_request_duration_seconds_count{code=~\"5..\"}[1m]))"}]},
+    {"title": "p99 latency by route", "type": "timeseries",
+     "gridPos": {"x": 16, "y": 0, "w": 8, "h": 9}, "fieldConfig": {"defaults": {"unit": "s"}},
+     "targets": [{"legendFormat": "{{route}}", "expr":
+      "histogram_quantile(0.99, sum by (le, route) (rate(http_request_duration_seconds_bucket[1m])))"}]},
+    {"title": "Transfers finished, last 5 minutes", "type": "timeseries",
+     "gridPos": {"x": 0, "y": 9, "w": 6, "h": 8},
+     "targets": [{"legendFormat": "{{state}}", "expr":
+      "sum by (state) (increase(transfers_finished_total[5m]))"}]},
+    {"title": "Saga step retries, last 5 minutes", "type": "timeseries",
+     "gridPos": {"x": 6, "y": 9, "w": 6, "h": 8},
+     "targets": [{"legendFormat": "{{step}}", "expr":
+      "sum by (step) (increase(transfer_step_retries_total[5m]))"}]},
+    {"title": "Outbox lag", "type": "timeseries",
+     "gridPos": {"x": 12, "y": 9, "w": 6, "h": 8}, "fieldConfig": {"defaults": {"unit": "s"}},
+     "targets": [{"legendFormat": "{{service}}", "expr": "max by (service) (outbox_lag_seconds)"}]},
+    {"title": "Notification dead letters", "type": "stat",
+     "gridPos": {"x": 18, "y": 9, "w": 6, "h": 8},
+     "targets": [{"expr": "sum(notification_dead_letters_total)"}]}
+  ]
+}

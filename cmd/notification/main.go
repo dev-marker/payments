@@ -18,9 +18,12 @@ import (
 	"github.com/fiston-user/payments/internal/platform/logging"
 	"github.com/fiston-user/payments/internal/platform/natsx"
 	"github.com/fiston-user/payments/internal/platform/postgres"
+	"github.com/fiston-user/payments/internal/platform/telemetry"
 	"github.com/fiston-user/payments/internal/transfer/transferevents"
 	"github.com/fiston-user/payments/internal/wallet/walletevents"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // version is stamped at build time: go build -ldflags "-X main.version=v1.2.3".
@@ -45,6 +48,14 @@ func main() {
 	slog.SetDefault(logger)
 	logger.Info("starting", "env", cfg.Env, "log_level", cfg.LogLevel.String())
 
+	// Traces go to the collector in OTEL_EXPORTER_OTLP_ENDPOINT, if there is one.
+	stopTracing, err := telemetry.Setup(context.Background(),
+		telemetry.Options{Service: "notification", Version: version, Env: cfg.Env})
+	if err != nil {
+		logger.Error("telemetry", "err", err)
+		os.Exit(1)
+	}
+
 	pool, err := postgres.NewPool(context.Background(), cfg.DatabaseURL, int32(cfg.DBMaxConns))
 	if err != nil {
 		logger.Error("connect to postgres", "err", err)
@@ -55,7 +66,10 @@ func main() {
 	// Email goes out through SMTP, to the addresses the auth service knows.
 	notifier := notification.NewNotifier(
 		notification.NewStore(pool),
-		notification.AuthUsers{BaseURL: cfg.AuthURL, Client: &http.Client{Timeout: 5 * time.Second}},
+		notification.AuthUsers{BaseURL: cfg.AuthURL, Client: &http.Client{
+			Timeout:   5 * time.Second,
+			Transport: otelhttp.NewTransport(http.DefaultTransport), // a span, and the context
+		}},
 		notification.SMTP{Addr: cfg.SMTPAddr, From: "no-reply@payments.example"},
 		logger,
 	)
@@ -97,12 +111,15 @@ func main() {
 		}
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ready"})
 	})
+	// For Prometheus, which scrapes it every few seconds. The gateway never routes it.
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	mux.HandleFunc("/", httpx.NotFound)
 
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: httpx.Chain(mux,
+		Handler: httpx.Chain(httpx.Routes(mux),
+			httpx.Observe(),
 			httpx.RequestID,
 			httpx.AccessLog(logger),
 			httpx.Recover(logger),
@@ -158,4 +175,8 @@ func main() {
 	nc.Close()
 	pool.Close()
 	logger.Info("nats and database pool closed")
+	// Last, the spans still waiting in the batch, from everything that stopped.
+	if err := stopTracing(shutdownCtx); err != nil {
+		logger.Error("flush traces", "err", err)
+	}
 }
