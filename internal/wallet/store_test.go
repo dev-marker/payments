@@ -2,7 +2,6 @@ package wallet_test
 
 import (
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/fiston-user/payments/internal/platform/postgres"
@@ -12,19 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// newPool connects to the database in WALLET_TEST_DATABASE_URL. Without it the
-// test is skipped, so go test ./... still passes on a machine without Docker.
+// newPool connects to the package's Postgres. It's an integration test: with
+// -short, it's skipped.
 func newPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("WALLET_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("WALLET_TEST_DATABASE_URL not set, skipping integration test")
+	if testing.Short() {
+		t.Skip("integration test")
 	}
-	pool, err := postgres.NewPool(t.Context(), dsn, 4)
+	pool, err := postgres.NewPool(t.Context(), postgresURL, 4)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	// Whatever a test did, the books must balance when it's over.
+	t.Cleanup(func() { checkBooks(t, pool) })
 	return pool
 }
 

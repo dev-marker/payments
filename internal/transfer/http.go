@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"fmt"
 	"net/http"
 	"regexp"
 
@@ -31,6 +32,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 var currencyCode = regexp.MustCompile(`^[A-Z]{3}$`)
 
+// MaxAmount is the most one transfer can move, in minor units: the wallet's
+// limit, a million dollars. Checked here, such a transfer fails at once, with
+// a 422, instead of later, in its saga.
+const MaxAmount = 100_000_000
+
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	var req struct {
 		From     string `json:"from"`
@@ -57,8 +63,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	} else if to == from {
 		v.Add("to", "must be a different wallet")
 	}
-	if req.Amount <= 0 {
+	switch {
+	case req.Amount <= 0:
 		v.Add("amount", "must be a positive number of minor units, like 1050 for 10.50")
+	case req.Amount > MaxAmount:
+		v.Add("amount", fmt.Sprintf("must be at most %d", MaxAmount))
 	}
 	if !currencyCode.MatchString(req.Currency) {
 		v.Add("currency", "must be a three-letter ISO 4217 code, like USD")

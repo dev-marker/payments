@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -58,11 +57,10 @@ func (users) Email(_ context.Context, id uuid.UUID) (string, error) {
 // copies, on a pool of one connection.
 func newNotifier(t *testing.T, sender *fakeSender) (*notification.Notifier, *notification.Store) {
 	t.Helper()
-	dsn := os.Getenv("NOTIFICATION_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("NOTIFICATION_TEST_DATABASE_URL not set, skipping integration test")
+	if testing.Short() {
+		t.Skip("integration test")
 	}
-	pool, err := postgres.NewPool(t.Context(), dsn, 1)
+	pool, err := postgres.NewPool(t.Context(), postgresURL, 1)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -115,15 +113,14 @@ func TestNotifyOnce(t *testing.T) {
 	}
 }
 
-// consume connects to NATS_TEST_URL, makes a stream for this test alone, and
-// starts n's consumer on it. It returns a function that publishes an event.
+// consume makes a stream for this test alone, and starts n's consumer on it.
+// It returns a function that publishes an event.
 func consume(t *testing.T, n *notification.Notifier) func(events.Event) {
 	t.Helper()
-	url := os.Getenv("NATS_TEST_URL")
-	if url == "" {
-		t.Skip("NATS_TEST_URL not set, skipping integration test")
+	if testing.Short() {
+		t.Skip("integration test")
 	}
-	nc, err := nats.Connect(url)
+	nc, err := nats.Connect(natsURL)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}

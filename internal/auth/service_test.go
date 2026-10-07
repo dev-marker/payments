@@ -3,7 +3,6 @@ package auth_test
 import (
 	"crypto/ed25519"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,16 +13,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// newService returns a Service on the database in AUTH_TEST_DATABASE_URL,
-// with a new key pair, and a verifier for its access tokens. Without the
-// database the test is skipped.
+// newService returns a Service on the package's database, with a new key
+// pair, and a verifier for its access tokens.
 func newService(t *testing.T) (*auth.Service, *authn.Verifier) {
 	t.Helper()
-	dsn := os.Getenv("AUTH_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("AUTH_TEST_DATABASE_URL not set, skipping integration test")
+	if testing.Short() {
+		t.Skip("integration test")
 	}
-	pool, err := postgres.NewPool(t.Context(), dsn, 4)
+	pool, err := postgres.NewPool(t.Context(), postgresURL, 4)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}

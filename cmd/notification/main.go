@@ -63,13 +63,14 @@ func main() {
 	}
 	logger.Info("connected to postgres", "max_conns", pool.Config().MaxConns)
 
-	// Email goes out through SMTP, to the addresses the auth service knows.
+	// Email goes out through SMTP, to the addresses the auth service knows,
+	// cached for a minute.
 	notifier := notification.NewNotifier(
 		notification.NewStore(pool),
-		notification.AuthUsers{BaseURL: cfg.AuthURL, Client: &http.Client{
+		notification.NewCachedUsers(notification.AuthUsers{BaseURL: cfg.AuthURL, Client: &http.Client{
 			Timeout:   5 * time.Second,
 			Transport: otelhttp.NewTransport(http.DefaultTransport), // a span, and the context
-		}},
+		}}, time.Minute),
 		notification.SMTP{Addr: cfg.SMTPAddr, From: "no-reply@payments.example"},
 		logger,
 	)

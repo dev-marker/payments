@@ -18,7 +18,7 @@ migrate-new:
 	@test -n "$(name)" || (echo "usage: make migrate-new name=add_something" && exit 1)
 	migrate create -ext sql -dir db/$(SERVICE)/migrations -seq $(name)
 
-.PHONY: generate test
+.PHONY: generate test test-integration test-race cover loadtest
 
 # Regenerate the Go code for every service's SQL queries, and for our
 # protobuf contracts, as long as they pass buf's lint rules.
@@ -27,22 +27,34 @@ generate:
 	@buf lint
 	@buf generate
 
-# Integration tests use the local Docker Postgres. Without this URL they skip.
-WALLET_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/wallet?sslmode=disable
-AUTH_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/auth?sslmode=disable
-TRANSFER_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/transfer?sslmode=disable
-NOTIFICATION_TEST_DATABASE_URL ?= postgres://payments:payments@localhost:5432/notification?sslmode=disable
-# Redis database 1, so tests never touch the services' data in database 0.
-REDIS_TEST_URL ?= redis://localhost:6379/1
-# Tests create streams of their own, with random names, and delete them.
-NATS_TEST_URL ?= nats://localhost:4222
-export WALLET_TEST_DATABASE_URL AUTH_TEST_DATABASE_URL TRANSFER_TEST_DATABASE_URL NOTIFICATION_TEST_DATABASE_URL REDIS_TEST_URL NATS_TEST_URL
-
 # Run part of the suite with PKGS=./internal/wallet TESTFLAGS='-run Transfer'.
 PKGS ?= ./...
 
+# Unit tests: seconds, and no Docker. Integration tests skip with -short.
 test:
-	@go test -count=1 $(TESTFLAGS) $(PKGS)
+	@go test -short -count=1 $(TESTFLAGS) $(PKGS)
+
+# Every test, on throwaway Postgres, NATS and Redis containers. Four packages
+# at a time: each starts its own, and Docker shouldn't start a dozen at once.
+test-integration:
+	@go test -count=1 -p 4 $(TESTFLAGS) $(PKGS)
+
+# Every test, under the race detector. CI runs this one.
+test-race:
+	@go test -race -count=1 -p 4 $(TESTFLAGS) $(PKGS)
+
+# Coverage of every package that has tests, then in total. For a closer look:
+# go tool cover -html=cover.out
+TESTED = $(shell go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)
+cover:
+	@go test -count=1 -p 4 -coverprofile=cover.out $(TESTFLAGS) $(TESTED)
+	@go tool cover -func=cover.out | tail -1
+
+# A load test of transfers through the gateway, with every service running.
+# k6 runs from its official image: there's nothing to install.
+loadtest:
+	@docker run --rm -t -v ./loadtest:/loadtest -e BASE_URL=http://host.docker.internal:8080 \
+		grafana/k6:2.4.0 run /loadtest/transfers.js
 
 .PHONY: run-wallet run-auth run-transfer run-notification dead-letters replay-dead-letters run-gateway keys
 

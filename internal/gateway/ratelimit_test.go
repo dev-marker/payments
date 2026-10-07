@@ -1,7 +1,6 @@
 package gateway_test
 
 import (
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,14 +12,13 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// testRedis connects to the test Redis. Without its URL, the test skips.
+// testRedis connects to the package's Redis.
 func testRedis(t *testing.T) *goredis.Client {
 	t.Helper()
-	url := os.Getenv("REDIS_TEST_URL")
-	if url == "" {
-		t.Skip("REDIS_TEST_URL not set")
+	if testing.Short() {
+		t.Skip("integration test")
 	}
-	rdb, err := redis.NewClient(url)
+	rdb, err := redis.NewClient(redisURL)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -66,11 +65,10 @@ type sagaTest struct {
 // copies, on one connection. Tests must never claim each other's transfers.
 func newSaga(t *testing.T) sagaTest {
 	t.Helper()
-	dsn := os.Getenv("TRANSFER_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TRANSFER_TEST_DATABASE_URL not set, skipping integration test")
+	if testing.Short() {
+		t.Skip("integration test")
 	}
-	pool, err := postgres.NewPool(t.Context(), dsn, 1)
+	pool, err := postgres.NewPool(t.Context(), postgresURL, 1)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}

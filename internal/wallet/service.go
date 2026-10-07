@@ -294,5 +294,11 @@ func decodeCursor(cursor string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return strconv.ParseInt(string(b), 10, 64)
+	id, err := strconv.ParseInt(string(b), 10, 64)
+	// Only the one cursor we'd write for an ID: base64 has more than one
+	// spelling for the same bytes, and ParseInt takes a +, or leading zeros.
+	if err != nil || id <= 0 || encodeCursor(id) != cursor {
+		return 0, errors.New("invalid cursor")
+	}
+	return id, nil
 }

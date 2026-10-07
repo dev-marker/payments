@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log/slog"
-	"os"
 	"testing"
 	"time"
 
@@ -25,11 +24,10 @@ import (
 // that hides the real one. The relay sees our events, and no one else's.
 func newOutbox(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("WALLET_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("WALLET_TEST_DATABASE_URL not set, skipping integration test")
+	if testing.Short() {
+		t.Skip("integration test")
 	}
-	pool, err := postgres.NewPool(t.Context(), dsn, 1)
+	pool, err := postgres.NewPool(t.Context(), postgresURL, 1)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -41,15 +39,13 @@ func newOutbox(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// newStream connects to NATS_TEST_URL, and creates a stream for this test
-// alone, on subjects no one else uses. Without the URL, the test is skipped.
+// newStream creates a stream for this test alone, on subjects no one else uses.
 func newStream(t *testing.T) (jetstream.JetStream, jetstream.Stream, string) {
 	t.Helper()
-	url := os.Getenv("NATS_TEST_URL")
-	if url == "" {
-		t.Skip("NATS_TEST_URL not set, skipping integration test")
+	if testing.Short() {
+		t.Skip("integration test")
 	}
-	nc, err := nats.Connect(url)
+	nc, err := nats.Connect(natsURL)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
