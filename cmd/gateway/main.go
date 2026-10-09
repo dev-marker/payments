@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/fiston-user/payments/internal/gateway"
 	"github.com/fiston-user/payments/internal/platform/authn"
 	"github.com/fiston-user/payments/internal/platform/config"
+	"github.com/fiston-user/payments/internal/platform/health"
 	"github.com/fiston-user/payments/internal/platform/logging"
 	"github.com/fiston-user/payments/internal/platform/redis"
 	"github.com/fiston-user/payments/internal/platform/telemetry"
@@ -25,11 +27,21 @@ import (
 var version = "dev"
 
 func main() {
+	healthcheck := flag.Bool("healthcheck", false, "exit 0 if the service is ready: for Docker")
+	flag.Parse()
 	cfg, err := loadConfig(config.New(os.LookupEnv))
 	if err != nil {
 		// There's no logger yet: its settings are part of the configuration.
 		fmt.Fprintln(os.Stderr, "gateway:", err)
 		os.Exit(2)
+	}
+	// Docker's health check: the binary checks itself, then exits.
+	if *healthcheck {
+		if err := health.Probe(cfg.MetricsAddr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
 	logger := logging.New(os.Stdout, logging.Options{
 		Service: "gateway",
@@ -91,10 +103,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Our metrics, on a port of their own: the gateway's port faces the internet.
-	metrics := &http.Server{
-		Addr: cfg.MetricsAddr, Handler: promhttp.Handler(), ReadHeaderTimeout: 5 * time.Second,
-	}
+	// Metrics and probes, on a port of their own: the gateway's port faces the
+	// internet. It checks nothing else: if it checked the services behind it,
+	// one of them down would take every gateway out with it.
+	probes := health.New(logger, nil)
+	ops := http.NewServeMux()
+	ops.Handle("GET /metrics", promhttp.Handler())
+	probes.Register(ops)
+	metrics := &http.Server{Addr: cfg.MetricsAddr, Handler: ops, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := metrics.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("metrics server failed", "err", err)
@@ -113,6 +129,8 @@ func main() {
 
 	<-ctx.Done()
 	logger.Info("shutting down gracefully")
+	// Readiness fails first, so load balancers stop sending us new requests.
+	probes.Drain(cfg.DrainDelay)
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()

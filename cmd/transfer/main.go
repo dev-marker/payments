@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,8 +13,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fiston-user/payments/db"
 	"github.com/fiston-user/payments/internal/platform/authn"
 	"github.com/fiston-user/payments/internal/platform/config"
+	"github.com/fiston-user/payments/internal/platform/health"
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/logging"
 	"github.com/fiston-user/payments/internal/platform/natsx"
@@ -31,11 +34,22 @@ import (
 var version = "dev"
 
 func main() {
+	healthcheck := flag.Bool("healthcheck", false, "exit 0 if the service is ready: for Docker")
+	migrate := flag.Bool("migrate", false, "apply the database migrations, and exit")
+	flag.Parse()
 	cfg, err := loadConfig(config.New(os.LookupEnv))
 	if err != nil {
 		// There's no logger yet: its settings are part of the configuration.
 		fmt.Fprintln(os.Stderr, "transfer:", err)
 		os.Exit(2)
+	}
+	// Docker's health check: the binary checks itself, then exits.
+	if *healthcheck {
+		if err := health.Probe(cfg.HTTPAddr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
 	logger := logging.New(os.Stdout, logging.Options{
 		Service: "transfer",
@@ -46,6 +60,18 @@ func main() {
 	// Code that logs through the slog package functions gets our logger too.
 	slog.SetDefault(logger)
 	logger.Info("starting", "env", cfg.Env, "log_level", cfg.LogLevel.String())
+
+	// Apply the migrations, then exit: the one-shot step before a new version
+	// starts, in Compose, and in Kubernetes.
+	if *migrate {
+		version, err := postgres.Migrate(cfg.DatabaseURL, db.Migrations("transfer"))
+		if err != nil {
+			logger.Error("migrate", "err", err)
+			os.Exit(1)
+		}
+		logger.Info("database migrated", "schema_version", version)
+		return
+	}
 
 	// Traces go to the collector in OTEL_EXPORTER_OTLP_ENDPOINT, if there is one.
 	stopTracing, err := telemetry.Setup(context.Background(),
@@ -99,20 +125,10 @@ func main() {
 	store := transfer.NewStore(pool)
 	orchestrator := transfer.NewOrchestrator(store, transfer.NewWallet(wallet), logger)
 
+	// Like the wallet: ready with its database. Events wait in the outbox.
+	probes := health.New(logger, map[string]health.Check{"postgres": pool.Ping})
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ok"})
-	})
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := pool.Ping(ctx); err != nil {
-			logger.WarnContext(ctx, "not ready: database unreachable", "err", err)
-			httpx.WriteJSON(w, r, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
-			return
-		}
-		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ready"})
-	})
+	probes.Register(mux)
 	// For Prometheus, which scrapes it every few seconds. The gateway never routes it.
 	mux.Handle("GET /metrics", promhttp.Handler())
 
@@ -157,6 +173,8 @@ func main() {
 
 	<-ctx.Done()
 	logger.Info("shutting down gracefully")
+	// Readiness fails first, so load balancers stop sending us new requests.
+	probes.Drain(cfg.DrainDelay)
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()

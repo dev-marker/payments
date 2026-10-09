@@ -53,12 +53,14 @@ cover:
 # A load test of transfers through the gateway, with every service running.
 # k6 runs from its official image: there's nothing to install.
 loadtest:
-	@docker run --rm -t -v ./loadtest:/loadtest -e BASE_URL=http://host.docker.internal:8080 \
+	@docker run --rm -t --add-host=host.docker.internal:host-gateway -v ./loadtest:/loadtest \
+		-e BASE_URL=http://host.docker.internal:8080 \
 		grafana/k6:2.4.0 run /loadtest/transfers.js
 
 .PHONY: run-wallet run-auth run-transfer run-notification dead-letters replay-dead-letters run-gateway keys
 
 # Run the wallet service against the local database, stamped with a git version.
+# Extra flags for a service go in ARGS: make run-wallet ARGS=-migrate
 VERSION ?= $(shell git describe --always --dirty)
 
 # Every service sends its traces to Jaeger, over OTLP. Tests don't: without
@@ -68,23 +70,23 @@ run-%: export OTEL_EXPORTER_OTLP_ENDPOINT = http://localhost:4318
 run-wallet:
 	@go build -ldflags "-X main.version=$(VERSION)" -o bin/wallet ./cmd/wallet
 	@WALLET_DATABASE_URL="$(DB_URL)" \
-		WALLET_AUTH_PUBLIC_KEY_FILE=secrets/auth_ed25519.pub.pem ./bin/wallet
+		WALLET_AUTH_PUBLIC_KEY_FILE=secrets/auth_ed25519.pub.pem ./bin/wallet $(ARGS)
 
 run-auth:
 	@go build -ldflags "-X main.version=$(VERSION)" -o bin/auth ./cmd/auth
 	@AUTH_DATABASE_URL="postgres://payments:payments@localhost:5432/auth?sslmode=disable" \
-		AUTH_PRIVATE_KEY_FILE=secrets/auth_ed25519.pem ./bin/auth
+		AUTH_PRIVATE_KEY_FILE=secrets/auth_ed25519.pem ./bin/auth $(ARGS)
 
 run-transfer:
 	@go build -ldflags "-X main.version=$(VERSION)" -o bin/transfer ./cmd/transfer
 	@TRANSFER_DATABASE_URL="postgres://payments:payments@localhost:5432/transfer?sslmode=disable" \
-		TRANSFER_AUTH_PUBLIC_KEY_FILE=secrets/auth_ed25519.pub.pem ./bin/transfer
+		TRANSFER_AUTH_PUBLIC_KEY_FILE=secrets/auth_ed25519.pub.pem ./bin/transfer $(ARGS)
 
 NOTIFICATION_DB_URL := postgres://payments:payments@localhost:5432/notification?sslmode=disable
 
 run-notification:
 	@go build -ldflags "-X main.version=$(VERSION)" -o bin/notification ./cmd/notification
-	@NOTIFICATION_DATABASE_URL="$(NOTIFICATION_DB_URL)" ./bin/notification
+	@NOTIFICATION_DATABASE_URL="$(NOTIFICATION_DB_URL)" ./bin/notification $(ARGS)
 
 # The messages the notification service gave up on, and why.
 dead-letters:
@@ -100,7 +102,7 @@ replay-dead-letters:
 # The public API on port 8080, in front of the others.
 run-gateway:
 	@go build -ldflags "-X main.version=$(VERSION)" -o bin/gateway ./cmd/gateway
-	@GATEWAY_AUTH_PUBLIC_KEY_FILE=secrets/auth_ed25519.pub.pem ./bin/gateway
+	@GATEWAY_AUTH_PUBLIC_KEY_FILE=secrets/auth_ed25519.pub.pem ./bin/gateway $(ARGS)
 
 # A new Ed25519 key pair for signing access tokens, readable only by you. The
 # auth service gets the private key, every other service the public one.

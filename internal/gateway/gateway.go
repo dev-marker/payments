@@ -49,9 +49,6 @@ func New(cfg Config) http.Handler {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "ok"})
-	})
 
 	auth := newProxy(cfg.AuthURL)
 	mux.Handle("POST /v1/auth/register", public(authTimeout, auth))

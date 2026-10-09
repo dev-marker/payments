@@ -14,6 +14,7 @@ type Config struct {
 	HTTPAddr        string
 	GRPCAddr        string
 	ShutdownTimeout time.Duration
+	DrainDelay      time.Duration // how long readiness fails before we stop
 	LogLevel        slog.Level
 	LogFormat       string
 	DatabaseURL     string
@@ -32,6 +33,7 @@ func loadConfig(env *config.Env) (Config, error) {
 		HTTPAddr:        env.String("WALLET_HTTP_ADDR", ":8081"),
 		GRPCAddr:        env.String("WALLET_GRPC_ADDR", ":9081"),
 		ShutdownTimeout: env.Duration("WALLET_SHUTDOWN_TIMEOUT", 10*time.Second),
+		DrainDelay:      env.Duration("WALLET_DRAIN_DELAY", 0),
 		LogLevel:        config.Parse(env, "LOG_LEVEL", slog.LevelInfo, logging.ParseLevel),
 		DatabaseURL:     env.Required("WALLET_DATABASE_URL"),
 		DBMaxConns:      env.Int("WALLET_DB_MAX_CONNS", 10),

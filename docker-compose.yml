@@ -1,3 +1,28 @@
+# Our five services, from their images, are in the app profile:
+#   docker compose --profile app up -d --build --wait
+# Plain docker compose up still starts only the infrastructure.
+x-service: &service
+  profiles: [app]
+  restart: unless-stopped
+  # Our binaries write nothing to disk, and need no Linux capabilities.
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+# A service's migrations: its own image, with -migrate, once, before it starts.
+x-migrate: &migrate
+  profiles: [app]
+  command: ["-migrate"]
+  depends_on:
+    postgres: {condition: service_healthy}
+
+# What every service gets: JSON logs, like production, and traces to Jaeger.
+# APP_ENV stays development, to keep every trace: production keeps one in ten.
+x-env: &env
+  APP_ENV: development
+  LOG_FORMAT: json
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -30,6 +55,12 @@ services:
     ports:
       - "4222:4222"
       - "8222:8222"
+    # Busybox's wget is in the image: healthy once JetStream is up.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz?js-enabled-only=true"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # Catches every email we send, in development. Its inbox: localhost:8025.
   mailpit:
@@ -78,5 +109,112 @@ services:
     ports:
       - "3000:3000"
 
+  wallet:
+    <<: *service
+    build: {context: ., args: {SERVICE: wallet, VERSION: "${VERSION:-dev}"}}
+    image: payments/wallet
+    environment: &wallet-env
+      <<: *env
+      WALLET_DATABASE_URL: postgres://payments:payments@postgres:5432/wallet?sslmode=disable
+      WALLET_REDIS_URL: redis://redis:6379/0
+      WALLET_NATS_URL: nats://nats:4222
+      WALLET_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
+    secrets: [auth_public_key]
+    ports: ["8081:8081"]
+    depends_on:
+      wallet-migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  wallet-migrate:
+    <<: *migrate
+    image: payments/wallet
+    environment: *wallet-env
+
+  auth:
+    <<: *service
+    build: {context: ., args: {SERVICE: auth, VERSION: "${VERSION:-dev}"}}
+    image: payments/auth
+    environment: &auth-env
+      <<: *env
+      AUTH_DATABASE_URL: postgres://payments:payments@postgres:5432/auth?sslmode=disable
+      AUTH_PRIVATE_KEY_FILE: /run/secrets/auth_private_key
+    secrets: [auth_private_key]
+    ports: ["8082:8082"]
+    depends_on:
+      auth-migrate: {condition: service_completed_successfully}
+
+  auth-migrate:
+    <<: *migrate
+    image: payments/auth
+    environment: *auth-env
+
+  transfer:
+    <<: *service
+    build: {context: ., args: {SERVICE: transfer, VERSION: "${VERSION:-dev}"}}
+    image: payments/transfer
+    environment: &transfer-env
+      <<: *env
+      TRANSFER_DATABASE_URL: postgres://payments:payments@postgres:5432/transfer?sslmode=disable
+      TRANSFER_WALLET_ADDR: dns:///wallet:9081
+      TRANSFER_NATS_URL: nats://nats:4222
+      TRANSFER_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
+    secrets: [auth_public_key]
+    ports: ["8083:8083"]
+    depends_on:
+      transfer-migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  transfer-migrate:
+    <<: *migrate
+    image: payments/transfer
+    environment: *transfer-env
+
+  # It consumes the wallet's and the transfer service's streams, which they
+  # create when they start: so it starts after them.
+  notification:
+    <<: *service
+    build: {context: ., args: {SERVICE: notification, VERSION: "${VERSION:-dev}"}}
+    image: payments/notification
+    environment: &notification-env
+      <<: *env
+      NOTIFICATION_DATABASE_URL: postgres://payments:payments@postgres:5432/notification?sslmode=disable
+      NOTIFICATION_NATS_URL: nats://nats:4222
+      NOTIFICATION_AUTH_URL: http://auth:8082
+      NOTIFICATION_SMTP_ADDR: mailpit:1025
+    ports: ["8084:8084"]
+    depends_on:
+      notification-migrate: {condition: service_completed_successfully}
+      wallet: {condition: service_healthy}
+      transfer: {condition: service_healthy}
+
+  notification-migrate:
+    <<: *migrate
+    image: payments/notification
+    environment: *notification-env
+
+  # The only one that faces the internet. 9080 is its metrics and probes port.
+  gateway:
+    <<: *service
+    build: {context: ., args: {SERVICE: gateway, VERSION: "${VERSION:-dev}"}}
+    image: payments/gateway
+    environment:
+      <<: *env
+      GATEWAY_WALLET_ADDR: dns:///wallet:9081
+      GATEWAY_AUTH_URL: http://auth:8082
+      GATEWAY_TRANSFER_URL: http://transfer:8083
+      GATEWAY_REDIS_URL: redis://redis:6379/0
+      GATEWAY_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
+      GATEWAY_IP_LIMIT: ${GATEWAY_IP_LIMIT:-20}
+    secrets: [auth_public_key]
+    ports: ["8080:8080", "9080:9080"]
+
 volumes:
   pgdata:
+
+# Mounted as files under /run/secrets, never copied into an image. make keys
+# creates them.
+secrets:
+  auth_private_key:
+    file: secrets/auth_ed25519.pem
+  auth_public_key:
+    file: secrets/auth_ed25519.pub.pem

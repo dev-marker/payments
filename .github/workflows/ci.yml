@@ -1,0 +1,106 @@
+# Every pull request, and every push to main: lint, test, and build the images.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to a pull request cancels the run that's still going for it. On
+# main, every commit gets a complete run, and its images.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Least privilege: every job can read the code, and nothing else, unless it
+# asks for more.
+permissions:
+  contents: read
+
+# Actions are pinned to a commit: a tag can be moved, a commit can't.
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod # the version in go.mod, nothing else
+      - run: go vet ./...
+      - run: go tool staticcheck ./...
+      # buf lints our contracts and, on pull requests, refuses breaking changes,
+      # compared with the base branch. Nothing is pushed to the Buf registry.
+      - uses: bufbuild/buf-action@37ac33d8960807670a6e9719080e885197b09cc6 # v1.7.0
+        with:
+          version: 1.72.0
+          lint: true
+          format: false
+          push: false
+          pr_comment: false
+
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod # the version in go.mod, nothing else
+      - run: make test
+
+  # GitHub's Ubuntu runners have Docker, so testcontainers works as it does here.
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod # the version in go.mod, nothing else
+      - run: make test-race
+
+  # One image per service, in parallel. Layers are cached in GitHub's cache, so
+  # an unchanged go.mod skips the download. Pull requests only build; main
+  # pushes to GitHub's registry, which is why this job, alone, may write packages.
+  images:
+    needs: [lint, test, integration]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service: [wallet, auth, transfer, notification, gateway]
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          build-args: |
+            SERVICE=${{ matrix.service }}
+            VERSION=${{ github.sha }}
+          tags: ghcr.io/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }}
+          push: ${{ github.ref == 'refs/heads/main' }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  # The whole system from its images, like the final demo, and episode 15's
+  # load test against it: a change that makes transfers slow fails here.
+  loadtest:
+    needs: [test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Throwaway keys, readable by the containers' user: on Linux, that's not us.
+      - run: make keys && chmod a+r secrets/*
+      - run: docker compose --profile app up -d --build --wait
+        env:
+          GATEWAY_IP_LIMIT: 1000 # k6 signs up fifty users, from one address
+      - run: make loadtest
+      - if: failure()
+        run: docker compose --profile app logs

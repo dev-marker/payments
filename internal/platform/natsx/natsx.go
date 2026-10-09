@@ -47,6 +47,16 @@ func Connect(url, name string, logger *slog.Logger) (*nats.Conn, error) {
 	return nc, nil
 }
 
+// Connected is a readiness check: is nc connected to NATS, right now?
+func Connected(nc *nats.Conn) func(context.Context) error {
+	return func(context.Context) error {
+		if !nc.IsConnected() {
+			return fmt.Errorf("nats: %s", nc.Status())
+		}
+		return nil
+	}
+}
+
 // EnsureStream creates a stream, or updates it to cfg if it exists. Every
 // instance of a service can call it at startup, any number of times, and a
 // changed config rolls out with the next deploy.

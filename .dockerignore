@@ -1,0 +1,12 @@
+# Docker only gets what a build needs. An allowlist: anything we add later,
+# like another secret, stays out until we let it in.
+*
+!go.mod
+!go.sum
+!cmd/
+!db/
+!gen/
+!internal/
+# Tests never go into an image, and editing one shouldn't rebuild it.
+**/*_test.go
+**/testdata/

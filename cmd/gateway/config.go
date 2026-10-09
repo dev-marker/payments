@@ -16,6 +16,7 @@ type Config struct {
 	HTTPAddr        string
 	MetricsAddr     string // internal only: never exposed to the internet
 	ShutdownTimeout time.Duration
+	DrainDelay      time.Duration // how long readiness fails before we stop
 	LogLevel        slog.Level
 	LogFormat       string
 	WalletAddr      string
@@ -36,6 +37,7 @@ func loadConfig(env *config.Env) (Config, error) {
 		HTTPAddr:        env.String("GATEWAY_HTTP_ADDR", ":8080"),
 		MetricsAddr:     env.String("GATEWAY_METRICS_ADDR", ":9080"),
 		ShutdownTimeout: env.Duration("GATEWAY_SHUTDOWN_TIMEOUT", 10*time.Second),
+		DrainDelay:      env.Duration("GATEWAY_DRAIN_DELAY", 0),
 		LogLevel:        config.Parse(env, "LOG_LEVEL", slog.LevelInfo, logging.ParseLevel),
 		WalletAddr:      env.String("GATEWAY_WALLET_ADDR", "dns:///localhost:9081"),
 		RedisURL:        env.String("GATEWAY_REDIS_URL", "redis://localhost:6379/0"),

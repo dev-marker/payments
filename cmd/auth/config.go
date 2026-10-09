@@ -13,6 +13,7 @@ type Config struct {
 	Env             string // development or production
 	HTTPAddr        string
 	ShutdownTimeout time.Duration
+	DrainDelay      time.Duration // how long readiness fails before we stop
 	LogLevel        slog.Level
 	LogFormat       string
 	DatabaseURL     string
@@ -29,6 +30,7 @@ func loadConfig(env *config.Env) (Config, error) {
 		Env:             env.OneOf("APP_ENV", "development", "development", "production"),
 		HTTPAddr:        env.String("AUTH_HTTP_ADDR", ":8082"),
 		ShutdownTimeout: env.Duration("AUTH_SHUTDOWN_TIMEOUT", 10*time.Second),
+		DrainDelay:      env.Duration("AUTH_DRAIN_DELAY", 0),
 		LogLevel:        config.Parse(env, "LOG_LEVEL", slog.LevelInfo, logging.ParseLevel),
 		DatabaseURL:     env.Required("AUTH_DATABASE_URL"),
 		DBMaxConns:      env.Int("AUTH_DB_MAX_CONNS", 10),
