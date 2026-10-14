@@ -83,6 +83,7 @@ func main() {
 		Handler: gateway.New(gateway.Config{
 			AuthURL:   cfg.AuthURL,
 			Transfers: cfg.TransferURL,
+			Webhooks:  cfg.WebhookURL,
 			Wallet:    wallet,
 			Verifier:  authn.NewVerifier(pub),
 			Redis:     rdb,

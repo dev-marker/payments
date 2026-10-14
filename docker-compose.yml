@@ -202,11 +202,36 @@ services:
       GATEWAY_WALLET_ADDR: dns:///wallet:9081
       GATEWAY_AUTH_URL: http://auth:8082
       GATEWAY_TRANSFER_URL: http://transfer:8083
+      GATEWAY_WEBHOOK_URL: http://webhook:8085
       GATEWAY_REDIS_URL: redis://redis:6379/0
       GATEWAY_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
       GATEWAY_IP_LIMIT: ${GATEWAY_IP_LIMIT:-20}
     secrets: [auth_public_key]
     ports: ["8080:8080", "9080:9080"]
+
+  # Webhooks. It consumes the transfer service's stream, so it starts after it.
+  webhook:
+    <<: *service
+    build: {context: ., args: {SERVICE: webhook, VERSION: "${VERSION:-dev}"}}
+    image: payments/webhook
+    environment: &webhook-env
+      <<: *env
+      WEBHOOK_DATABASE_URL: postgres://payments:payments@postgres:5432/webhook?sslmode=disable
+      WEBHOOK_NATS_URL: nats://nats:4222
+      WEBHOOK_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
+      WEBHOOK_RETRY_SCHEDULE: ${WEBHOOK_RETRY_SCHEDULE:-} # empty: the real one
+    secrets: [auth_public_key]
+    ports: ["8085:8085"]
+    # For receivers on this machine, outside Docker: Linux needs this line.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      webhook-migrate: {condition: service_completed_successfully}
+      transfer: {condition: service_healthy}
+
+  webhook-migrate:
+    <<: *migrate
+    image: payments/webhook
+    environment: *webhook-env
 
 volumes:
   pgdata:

@@ -27,6 +27,7 @@ type Config struct {
 	Origins         []string
 	AuthURL         *url.URL
 	TransferURL     *url.URL
+	WebhookURL      *url.URL
 }
 
 // loadConfig reads the configuration. Everything has a sensible default except
@@ -49,6 +50,8 @@ func loadConfig(env *config.Env) (Config, error) {
 			&url.URL{Scheme: "http", Host: "localhost:8082"}, url.Parse),
 		TransferURL: config.Parse(env, "GATEWAY_TRANSFER_URL",
 			&url.URL{Scheme: "http", Host: "localhost:8083"}, url.Parse),
+		WebhookURL: config.Parse(env, "GATEWAY_WEBHOOK_URL",
+			&url.URL{Scheme: "http", Host: "localhost:8085"}, url.Parse),
 	}
 
 	// Text logs for humans in development, JSON for log collectors in production.

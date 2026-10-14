@@ -52,3 +52,15 @@ sql:
         out: internal/notification/notificationdb
         sql_package: pgx/v5
         overrides: *overrides
+  - engine: postgresql
+    schema: db/webhook/migrations
+    queries: db/webhook/queries
+    gen:
+      go:
+        package: webhookdb
+        out: internal/webhook/webhookdb
+        sql_package: pgx/v5
+        emit_json_tags: true
+        emit_empty_slices: true
+        initialisms: [id, url]
+        overrides: *overrides

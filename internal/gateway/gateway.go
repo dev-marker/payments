@@ -20,6 +20,7 @@ import (
 type Config struct {
 	AuthURL   *url.URL             // the auth service, over HTTP
 	Transfers *url.URL             // the transfer service, over HTTP
+	Webhooks  *url.URL             // the webhook service, over HTTP
 	Wallet    *walletclient.Client // the wallet service, over gRPC
 	Verifier  *authn.Verifier
 	Redis     *redis.Client // the rate limiters' buckets
@@ -34,6 +35,7 @@ const (
 	authTimeout     = 5 * time.Second
 	walletTimeout   = 3 * time.Second
 	transferTimeout = 3 * time.Second
+	webhookTimeout  = 3 * time.Second
 )
 
 // New returns the gateway's handler.
@@ -66,6 +68,9 @@ func New(cfg Config) http.Handler {
 	transfers := newProxy(cfg.Transfers)
 	mux.Handle("POST /v1/transfers", private(transferTimeout, transfers))
 	mux.Handle("GET /v1/transfers/{id}", private(transferTimeout, transfers))
+
+	// Webhook endpoints and their deliveries: the webhook service checks the rest.
+	mux.Handle("/v1/webhooks/", private(webhookTimeout, newProxy(cfg.Webhooks)))
 	mux.HandleFunc("/", httpx.NotFound)
 
 	// Observe goes first. We face the internet, so a client's trace context

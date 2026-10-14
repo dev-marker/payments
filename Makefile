@@ -104,6 +104,14 @@ run-gateway:
 	@go build -ldflags "-X main.version=$(VERSION)" -o bin/gateway ./cmd/gateway
 	@GATEWAY_AUTH_PUBLIC_KEY_FILE=secrets/auth_ed25519.pub.pem ./bin/gateway $(ARGS)
 
+.PHONY: run-webhook
+
+# Webhooks, on port 8085: our users' servers hear about their transfers.
+run-webhook:
+	@go build -ldflags "-X main.version=$(VERSION)" -o bin/webhook ./cmd/webhook
+	@WEBHOOK_DATABASE_URL="postgres://payments:payments@localhost:5432/webhook?sslmode=disable" \
+		WEBHOOK_AUTH_PUBLIC_KEY_FILE=secrets/auth_ed25519.pub.pem ./bin/webhook $(ARGS)
+
 # A new Ed25519 key pair for signing access tokens, readable only by you. The
 # auth service gets the private key, every other service the public one.
 keys:

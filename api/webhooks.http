@@ -1,0 +1,48 @@
+# Webhooks, through the gateway. Run transfers.http first: Alice needs a
+# wallet, and someone to pay. The receiver: go run ./cmd/webhook-receiver
+@baseUrl = http://localhost:8080
+@token = {{login.response.body.access_token}}
+@endpointId = {{endpoint.response.body.id}}
+
+### Log in as Alice
+# @name login
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{"email": "alice@example.com", "password": "correct horse battery staple"}
+
+### Register an endpoint
+# @name endpoint
+POST {{baseUrl}}/v1/webhooks/endpoints
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "url": "http://host.docker.internal:8090/webhooks",
+  "event_types": ["transfer.completed.v1", "transfer.failed.v1"]
+}
+
+### The delivery log
+# @name deliveries
+GET {{baseUrl}}/v1/webhooks/deliveries?endpoint={{endpointId}}
+Authorization: Bearer {{token}}
+
+### Replay the latest delivery
+POST {{baseUrl}}/v1/webhooks/deliveries/{{deliveries.response.body.$.deliveries[0].id}}/replay
+Authorization: Bearer {{token}}
+
+### A forged webhook, straight to the receiver
+POST http://localhost:8090/webhooks
+Content-Type: application/json
+Webhook-Id: 0195f1c2-7d3e-7a10-9c4b-2f6e8d1a0b37
+Webhook-Timestamp: {{$timestamp}}
+Webhook-Signature: v1,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4=
+
+{"type": "transfer.completed.v1", "data": {"amount": 100000000, "currency": "USD"}}
+
+### Not the cloud's metadata service
+POST {{baseUrl}}/v1/webhooks/endpoints
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"url": "http://169.254.169.254/latest/meta-data/", "event_types": ["transfer.completed.v1"]}
