@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fiston-user/payments/internal/fx"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go/jetstream"
 )
@@ -16,9 +17,10 @@ const Stream = "WALLET"
 // Event types. A type names the service, what happened, and the version of
 // its data. A breaking change is a new version, published next to the old one.
 const (
-	WalletCreated     = "wallet.wallet.created.v1"
-	DepositCompleted  = "wallet.deposit.completed.v1"
-	TransferCompleted = "wallet.transfer.completed.v1"
+	WalletCreated       = "wallet.wallet.created.v1"
+	DepositCompleted    = "wallet.deposit.completed.v1"
+	TransferCompleted   = "wallet.transfer.completed.v1"
+	ConversionCompleted = "wallet.conversion.completed.v1"
 )
 
 // Subject is the subject events of type t are published on, like
@@ -69,4 +71,17 @@ type Transfer struct {
 	From          Wallet    `json:"from"`
 	To            Wallet    `json:"to"`
 	Amount        int64     `json:"amount"`
+}
+
+// Conversion is the data of a conversion.completed event: a customer sold one
+// currency for another, from one of their wallets to the other.
+type Conversion struct {
+	TransactionID uuid.UUID `json:"transaction_id"`
+	QuoteID       uuid.UUID `json:"quote_id"`
+	From          Wallet    `json:"from"`
+	To            Wallet    `json:"to"`
+	Sold          int64     `json:"sold"`   // minor units of From's currency
+	Fee           int64     `json:"fee"`    // on top, in From's currency
+	Bought        int64     `json:"bought"` // minor units of To's currency
+	Rate          fx.Rate   `json:"rate"`
 }

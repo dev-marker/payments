@@ -39,6 +39,7 @@ type Money struct {
 type Service struct {
 	store *Store
 	user  *uuid.UUID // set by As: the one owner whose wallets we see
+	fx    FX         // set by WithFX
 }
 
 // NewService returns a Service that keeps its data in store.
@@ -49,13 +50,17 @@ func NewService(store *Store) *Service {
 // WithTx returns a Service that does all its work inside tx, the caller's
 // database transaction. See Store.WithTx.
 func (s *Service) WithTx(tx pgx.Tx) *Service {
-	return &Service{store: s.store.WithTx(tx), user: s.user}
+	c := *s
+	c.store = s.store.WithTx(tx)
+	return &c
 }
 
 // As returns a Service that acts for a user: it only sees their wallets. The
 // Service without a user sees everything, for our own code, like tests.
 func (s *Service) As(user uuid.UUID) *Service {
-	return &Service{store: s.store, user: &user}
+	c := *s
+	c.user = &user
+	return &c
 }
 
 // currencyCode matches the shape of an ISO 4217 code, like USD or EUR.

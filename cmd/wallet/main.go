@@ -16,6 +16,7 @@ import (
 
 	"github.com/fiston-user/payments/db"
 	walletv1 "github.com/fiston-user/payments/gen/wallet/v1"
+	"github.com/fiston-user/payments/internal/fx"
 	"github.com/fiston-user/payments/internal/platform/authn"
 	"github.com/fiston-user/payments/internal/platform/config"
 	"github.com/fiston-user/payments/internal/platform/grpcx"
@@ -146,7 +147,16 @@ func main() {
 
 	// The wallet API, where every route needs an access token, and a JSON 404
 	// for everything else.
-	svc := wallet.NewService(wallet.NewStore(pool))
+	// Rates for currency conversion: built into the binary, for development.
+	// In production, a Provider that asks a bank, or a market data feed.
+	rates, err := fx.DevRates()
+	if err != nil {
+		logger.Error("fx rates", "err", err)
+		os.Exit(1)
+	}
+	svc := wallet.NewService(wallet.NewStore(pool)).WithFX(wallet.FX{
+		Rates: rates, QuoteTTL: cfg.FXQuoteTTL, FeeBps: int64(cfg.FXFeeBps),
+	})
 	keys := idempotency.NewStore(pool, rdb)
 	api := http.NewServeMux()
 	wallet.NewHandler(svc, keys).Register(api)

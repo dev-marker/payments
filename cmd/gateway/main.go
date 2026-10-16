@@ -84,6 +84,7 @@ func main() {
 			AuthURL:   cfg.AuthURL,
 			Transfers: cfg.TransferURL,
 			Webhooks:  cfg.WebhookURL,
+			WalletAPI: cfg.WalletURL,
 			Wallet:    wallet,
 			Verifier:  authn.NewVerifier(pub),
 			Redis:     rdb,

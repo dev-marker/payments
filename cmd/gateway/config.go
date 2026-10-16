@@ -28,6 +28,7 @@ type Config struct {
 	AuthURL         *url.URL
 	TransferURL     *url.URL
 	WebhookURL      *url.URL
+	WalletURL       *url.URL // the wallet's REST API, next to its gRPC one
 }
 
 // loadConfig reads the configuration. Everything has a sensible default except
@@ -52,6 +53,8 @@ func loadConfig(env *config.Env) (Config, error) {
 			&url.URL{Scheme: "http", Host: "localhost:8083"}, url.Parse),
 		WebhookURL: config.Parse(env, "GATEWAY_WEBHOOK_URL",
 			&url.URL{Scheme: "http", Host: "localhost:8085"}, url.Parse),
+		WalletURL: config.Parse(env, "GATEWAY_WALLET_URL",
+			&url.URL{Scheme: "http", Host: "localhost:8081"}, url.Parse),
 	}
 
 	// Text logs for humans in development, JSON for log collectors in production.

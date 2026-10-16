@@ -1,0 +1,100 @@
+# Currency conversion, through the gateway: Alice holds dollars, and buys
+# euros. Send the requests in order, on a fresh database.
+@baseUrl = http://localhost:8080
+@password = correct horse battery staple
+@token = {{login.response.body.access_token}}
+@dollars = {{usd.response.body.id}}
+
+### Register
+POST {{baseUrl}}/v1/auth/register
+Content-Type: application/json
+
+{"email": "alice@example.com", "password": "{{password}}"}
+
+### Log in
+# @name login
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{"email": "alice@example.com", "password": "{{password}}"}
+
+### A dollar wallet
+# @name usd
+POST {{baseUrl}}/v1/wallets
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"currency": "USD"}
+
+### Deposit five hundred dollars
+POST {{baseUrl}}/v1/wallets/{{dollars}}/deposits
+Authorization: Bearer {{token}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"amount": 50000, "currency": "USD"}
+
+### A euro wallet
+# @name eur
+POST {{baseUrl}}/v1/wallets
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"currency": "EUR"}
+
+### Quote: sell a hundred dollars for euros
+# @name quote
+POST {{baseUrl}}/v1/fx/quotes
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"from": "USD", "to": "EUR", "sell_amount": 10000}
+
+### Convert
+# @name convert
+POST {{baseUrl}}/v1/fx/conversions
+Authorization: Bearer {{token}}
+Idempotency-Key: {{quote.response.body.id}}
+Content-Type: application/json
+
+{"quote_id": "{{quote.response.body.id}}"}
+
+### The same quote, as a new request
+POST {{baseUrl}}/v1/fx/conversions
+Authorization: Bearer {{token}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"quote_id": "{{quote.response.body.id}}"}
+
+### Dollars
+GET {{baseUrl}}/v1/wallets/{{dollars}}/balance
+Authorization: Bearer {{token}}
+
+### Euros
+GET {{baseUrl}}/v1/wallets/{{eur.response.body.id}}/balance
+Authorization: Bearer {{token}}
+
+### Quote: ten dollars in yen
+POST {{baseUrl}}/v1/fx/quotes
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"from": "USD", "to": "JPY", "sell_amount": 1000}
+
+### Quote: buy exactly fifty euros
+# @name buyQuote
+POST {{baseUrl}}/v1/fx/quotes
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"from": "USD", "to": "EUR", "buy_amount": 5000}
+
+### Convert the fifty euros
+# @name convertBuy
+POST {{baseUrl}}/v1/fx/conversions
+Authorization: Bearer {{token}}
+Idempotency-Key: {{buyQuote.response.body.id}}
+Content-Type: application/json
+
+{"quote_id": "{{buyQuote.response.body.id}}"}

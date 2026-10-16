@@ -203,6 +203,7 @@ services:
       GATEWAY_AUTH_URL: http://auth:8082
       GATEWAY_TRANSFER_URL: http://transfer:8083
       GATEWAY_WEBHOOK_URL: http://webhook:8085
+      GATEWAY_WALLET_URL: http://wallet:8081
       GATEWAY_REDIS_URL: redis://redis:6379/0
       GATEWAY_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
       GATEWAY_IP_LIMIT: ${GATEWAY_IP_LIMIT:-20}

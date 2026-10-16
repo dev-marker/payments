@@ -22,7 +22,9 @@ type Config struct {
 	RedisURL        string
 	PublicKeyFile   string
 	NATSURL         string
-	NATSReplicas    int // copies of the WALLET stream: 1 locally, 3 in production
+	NATSReplicas    int           // copies of the WALLET stream: 1 locally, 3 in production
+	FXQuoteTTL      time.Duration // how long a quote's price holds
+	FXFeeBps        int           // our fee on conversions, in basis points
 }
 
 // loadConfig reads the configuration. Everything has a sensible default except
@@ -41,6 +43,8 @@ func loadConfig(env *config.Env) (Config, error) {
 		PublicKeyFile:   env.Required("WALLET_AUTH_PUBLIC_KEY_FILE"),
 		NATSURL:         env.String("WALLET_NATS_URL", "nats://localhost:4222"),
 		NATSReplicas:    env.Int("WALLET_NATS_REPLICAS", 1),
+		FXQuoteTTL:      env.Duration("WALLET_FX_QUOTE_TTL", 30*time.Second),
+		FXFeeBps:        env.Int("WALLET_FX_FEE_BPS", 50),
 	}
 
 	// Text logs for humans in development, JSON for log collectors in production.
@@ -55,6 +59,9 @@ func loadConfig(env *config.Env) (Config, error) {
 	}
 	if c.NATSReplicas < 1 || c.NATSReplicas > 5 {
 		env.Invalid("WALLET_NATS_REPLICAS", "must be between 1 and 5")
+	}
+	if c.FXFeeBps < 0 || c.FXFeeBps > 1000 {
+		env.Invalid("WALLET_FX_FEE_BPS", "must be between 0 and 1000: ten percent")
 	}
 	return c, env.Err()
 }

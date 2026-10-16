@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fiston-user/payments/internal/fx"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/otel/propagation"
@@ -195,6 +196,20 @@ type Entry struct {
 	Amount        int64          `json:"amount"`
 	Currency      string         `json:"currency"`
 	CreatedAt     time.Time      `json:"created_at"`
+}
+
+type FXQuote struct {
+	ID            uuid.UUID  `json:"id"`
+	OwnerID       uuid.UUID  `json:"owner_id"`
+	SellCurrency  string     `json:"sell_currency"`
+	SellAmount    int64      `json:"sell_amount"`
+	BuyCurrency   string     `json:"buy_currency"`
+	BuyAmount     int64      `json:"buy_amount"`
+	Fee           int64      `json:"fee"`
+	Rate          fx.Rate    `json:"rate"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	TransactionID *uuid.UUID `json:"transaction_id"`
 }
 
 type Hold struct {

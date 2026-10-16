@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fiston-user/payments/internal/fx"
 	"github.com/fiston-user/payments/internal/platform/authn"
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/idempotency"
@@ -49,6 +50,16 @@ type (
 		Entries    []entryResponse `json:"entries"`
 		NextCursor string          `json:"next_cursor,omitempty"`
 	}
+	// A quote, and once it's used, a conversion: the same, with its transaction.
+	quoteResponse struct {
+		ID            uuid.UUID  `json:"id"`
+		Sell          Money      `json:"sell"`
+		Buy           Money      `json:"buy"`
+		Fee           Money      `json:"fee"`
+		Rate          fx.Rate    `json:"rate"`
+		ExpiresAt     time.Time  `json:"expires_at"`
+		TransactionID *uuid.UUID `json:"transaction_id,omitempty"`
+	}
 )
 
 func toWallet(a Account) walletResponse {
@@ -76,6 +87,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /v1/wallets/{id}/deposits", httpx.HandlerFunc(h.deposit))
 	mux.Handle("GET /v1/wallets/{id}/entries", httpx.HandlerFunc(h.listEntries))
 	mux.Handle("POST /v1/transfers", httpx.HandlerFunc(h.transfer))
+	mux.Handle("POST /v1/fx/quotes", httpx.HandlerFunc(h.quote))
+	mux.Handle("POST /v1/fx/conversions", httpx.HandlerFunc(h.convert))
 }
 
 // walletID reads the wallet ID from the URL. An ID that isn't a UUID can't
@@ -244,4 +257,47 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpx.WriteJSON(w, r, http.StatusOK, resp)
 	return nil
+}
+
+func toQuote(q FXQuote) quoteResponse {
+	return quoteResponse{
+		ID:            q.ID,
+		Sell:          Money{Amount: q.SellAmount, Currency: q.SellCurrency},
+		Buy:           Money{Amount: q.BuyAmount, Currency: q.BuyCurrency},
+		Fee:           Money{Amount: q.Fee, Currency: q.SellCurrency},
+		Rate:          q.Rate,
+		ExpiresAt:     q.ExpiresAt,
+		TransactionID: q.TransactionID,
+	}
+}
+
+func (h *Handler) quote(w http.ResponseWriter, r *http.Request) error {
+	var req QuoteRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	quote, err := h.svc.Quote(r.Context(), caller(r.Context()), req)
+	if err != nil {
+		return err
+	}
+	httpx.WriteJSON(w, r, http.StatusCreated, toQuote(quote))
+	return nil
+}
+
+// convert takes a quote. A retry with the same Idempotency-Key gets the same
+// answer; a new request for a used quote gets quote_used.
+func (h *Handler) convert(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		QuoteID uuid.UUID `json:"quote_id"`
+	}
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	return h.idempotent(w, r, req, func(svc *Service) (idempotency.Response, error) {
+		used, err := svc.Convert(r.Context(), caller(r.Context()), req.QuoteID)
+		if err != nil {
+			return idempotency.Response{}, err
+		}
+		return idempotency.JSON(http.StatusCreated, toQuote(used))
+	})
 }

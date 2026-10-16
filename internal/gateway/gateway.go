@@ -21,6 +21,7 @@ type Config struct {
 	AuthURL   *url.URL             // the auth service, over HTTP
 	Transfers *url.URL             // the transfer service, over HTTP
 	Webhooks  *url.URL             // the webhook service, over HTTP
+	WalletAPI *url.URL             // the wallet's REST API, for conversions
 	Wallet    *walletclient.Client // the wallet service, over gRPC
 	Verifier  *authn.Verifier
 	Redis     *redis.Client // the rate limiters' buckets
@@ -63,6 +64,8 @@ func New(cfg Config) http.Handler {
 	mux.Handle("GET /v1/wallets/{id}", private(walletTimeout, rpc(wallet.get)))
 	mux.Handle("GET /v1/wallets/{id}/balance", private(walletTimeout, rpc(wallet.balance)))
 	mux.Handle("POST /v1/wallets/{id}/deposits", private(walletTimeout, rpc(wallet.deposit)))
+	// Quotes and conversions: only our users call them, so they stay REST.
+	mux.Handle("/v1/fx/", private(walletTimeout, newProxy(cfg.WalletAPI)))
 
 	// Transfers are sagas now: the transfer service runs them.
 	transfers := newProxy(cfg.Transfers)

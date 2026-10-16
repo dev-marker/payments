@@ -11,6 +11,7 @@ sql:
         emit_json_tags: true
         emit_empty_slices: true
         emit_enum_valid_method: true
+        initialisms: [id, fx]
         overrides: &overrides
           - db_type: uuid
             go_type: github.com/google/uuid.UUID
@@ -25,6 +26,9 @@ sql:
           # Trace context columns come out as OpenTelemetry's own carrier.
           - column: "*.trace_context"
             go_type: go.opentelemetry.io/otel/propagation.MapCarrier
+          # Exchange rates come out as exact decimals.
+          - column: "fx_quotes.rate"
+            go_type: github.com/fiston-user/payments/internal/fx.Rate
   - engine: postgresql
     schema: db/auth/migrations
     queries: db/auth/queries

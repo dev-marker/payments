@@ -23,17 +23,9 @@ func (s *Store) Transfer(ctx context.Context, src, dst Account, amount int64) (T
 	var posted Transaction
 	err := s.inTx(ctx, func(q *walletdb.Queries) error {
 		// Lock both accounts until we commit. Another transfer that touches
-		// either one waits right here, so the balance below stays true. Every
-		// transfer locks the lower ID first, so two transfers can never each
-		// hold the lock the other one is waiting for: no deadlocks.
-		first, second := from, to
-		if bytes.Compare(from[:], to[:]) > 0 {
-			first, second = to, from
-		}
-		for _, id := range []uuid.UUID{first, second} {
-			if _, err := q.LockAccount(ctx, id); err != nil {
-				return fmt.Errorf("lock account %s: %w", id, err)
-			}
+		// either one waits right here, so the balance below stays true.
+		if err := lockInOrder(ctx, q, from, to); err != nil {
+			return err
 		}
 
 		b, err := q.GetAccountBalance(ctx, from)
@@ -65,4 +57,19 @@ func (s *Store) Transfer(ctx context.Context, src, dst Account, amount int64) (T
 		return Transaction{}, fmt.Errorf("transfer: %w", err)
 	}
 	return posted, nil
+}
+
+// lockInOrder locks two accounts until we commit, the lower ID first. Every
+// caller takes them in the same order, so two transactions can never each
+// hold the lock the other one is waiting for: no deadlocks.
+func lockInOrder(ctx context.Context, q *walletdb.Queries, a, b uuid.UUID) error {
+	if bytes.Compare(a[:], b[:]) > 0 {
+		a, b = b, a
+	}
+	for _, id := range []uuid.UUID{a, b} {
+		if _, err := q.LockAccount(ctx, id); err != nil {
+			return fmt.Errorf("lock account %s: %w", id, err)
+		}
+	}
+	return nil
 }
