@@ -12,10 +12,11 @@ import (
 // Stream holds every event the transfer service publishes.
 const Stream = "TRANSFER"
 
-// Event types: a transfer is over.
+// Event types: a transfer is over, or waits for a person.
 const (
-	Completed = "transfer.completed.v1"
-	Failed    = "transfer.failed.v1" // refused or reversed: nothing moved
+	Completed      = "transfer.completed.v1"
+	Failed         = "transfer.failed.v1" // refused or reversed: nothing moved
+	ReviewRequired = "transfer.review_required.v1"
 )
 
 // Subject is where events of type t are published.

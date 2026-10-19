@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fiston-user/payments/db"
+	"github.com/fiston-user/payments/internal/fx"
 	"github.com/fiston-user/payments/internal/platform/authn"
 	"github.com/fiston-user/payments/internal/platform/config"
 	"github.com/fiston-user/payments/internal/platform/health"
@@ -22,8 +23,10 @@ import (
 	"github.com/fiston-user/payments/internal/platform/natsx"
 	"github.com/fiston-user/payments/internal/platform/outbox"
 	"github.com/fiston-user/payments/internal/platform/postgres"
+	"github.com/fiston-user/payments/internal/platform/redis"
 	"github.com/fiston-user/payments/internal/platform/telemetry"
 	"github.com/fiston-user/payments/internal/transfer"
+	"github.com/fiston-user/payments/internal/transfer/risk"
 	"github.com/fiston-user/payments/internal/transfer/transferevents"
 	"github.com/fiston-user/payments/internal/wallet/walletclient"
 	"github.com/nats-io/nats.go/jetstream"
@@ -122,8 +125,24 @@ func main() {
 		logger.Error("wallet client", "err", err)
 		os.Exit(1)
 	}
+	// Redis keeps the velocity counters. Like the gateway's limiter, it's never
+	// a reason to be unready: without it, transfers go to review.
+	rdb, err := redis.NewClient(cfg.RedisURL)
+	if err != nil {
+		logger.Error("redis", "err", err)
+		os.Exit(1)
+	}
+	rates, err := fx.DevRates()
+	if err != nil {
+		logger.Error("fx rates", "err", err)
+		os.Exit(1)
+	}
 	store := transfer.NewStore(pool)
-	orchestrator := transfer.NewOrchestrator(store, transfer.NewWallet(wallet), logger)
+	store.ReviewTimeout = cfg.ReviewTimeout
+	engine := risk.NewEngine(risk.Rules(cfg.Risk)...)
+	velocity := risk.NewVelocity(rdb, cfg.Risk.CountWindow, cfg.Risk.AmountWindow)
+	screener := transfer.NewRiskScreener(engine, velocity, wallet, store, rates, logger)
+	orchestrator := transfer.NewOrchestrator(store, transfer.NewWallet(wallet), screener, logger)
 
 	// Like the wallet: ready with its database. Events wait in the outbox.
 	probes := health.New(logger, map[string]health.Check{"postgres": pool.Ping})
@@ -135,9 +154,13 @@ func main() {
 	// The transfer API, where every route needs an access token. A new
 	// transfer wakes the orchestrator up.
 	api := http.NewServeMux()
-	transfer.NewHandler(store, orchestrator.Wake).Register(api)
+	handler := transfer.NewHandler(store, orchestrator.Wake)
+	handler.Register(api)
 	api.HandleFunc("/", httpx.NotFound)
 	mux.Handle("/v1/", verifier.Require(httpx.Routes(api)))
+	// The review API: no user token, since users never reach it. Episode 21
+	// puts mTLS in front, and names the reviewer from their sign-in.
+	handler.RegisterInternal(mux)
 	mux.HandleFunc("/", httpx.NotFound)
 
 	srv := &http.Server{
@@ -192,6 +215,7 @@ func main() {
 	logger.Info("orchestrator and outbox relay stopped")
 
 	wallet.Close()
+	rdb.Close()
 	nc.Close()
 	pool.Close()
 	logger.Info("wallet client, nats and database pool closed")

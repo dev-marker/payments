@@ -40,7 +40,7 @@ func Permanent(err error) error {
 func compose(evt events.Event) (Message, bool, error) {
 	m := Message{EventID: evt.ID}
 	switch evt.Type {
-	case transferevents.Completed, transferevents.Failed:
+	case transferevents.Completed, transferevents.Failed, transferevents.ReviewRequired:
 		var t transferevents.Transfer
 		if err := json.Unmarshal(evt.Data, &t); err != nil {
 			return m, false, Permanent(fmt.Errorf("decode %s: %w", evt.Type, err))
@@ -49,6 +49,9 @@ func compose(evt events.Event) (Message, bool, error) {
 		if evt.Type == transferevents.Completed {
 			m.Subject = "You sent " + money(t.Amount, t.Currency)
 			m.Body = "Your transfer went through. Transfer ID: " + t.ID.String()
+		} else if evt.Type == transferevents.ReviewRequired {
+			m.Subject = "Your transfer of " + money(t.Amount, t.Currency) + " is being reviewed"
+			m.Body = "The money is set aside while we check it. We'll email you when it's decided."
 		} else {
 			m.Subject = "Your transfer of " + money(t.Amount, t.Currency) + " didn't go through"
 			m.Body = "Reason: " + t.FailureReason + ". Nothing left your wallet."

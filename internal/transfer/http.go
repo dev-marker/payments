@@ -113,3 +113,49 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) error {
 	httpx.WriteJSON(w, r, http.StatusOK, t)
 	return nil
 }
+
+// RegisterInternal adds the review API to mux, for our risk team's tools.
+// The gateway never routes /internal/: only our own network can reach it.
+func (h *Handler) RegisterInternal(mux *http.ServeMux) {
+	mux.Handle("POST /internal/transfers/{id}/approve", httpx.HandlerFunc(h.review(true)))
+	mux.Handle("POST /internal/transfers/{id}/reject", httpx.HandlerFunc(h.review(false)))
+}
+
+// review records a reviewer's verdict, and wakes the orchestrator to carry
+// it out: the capture, or the release.
+func (h *Handler) review(approve bool) httpx.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		var req struct {
+			Reviewer string `json:"reviewer"`
+			Note     string `json:"note"`
+		}
+		if err := httpx.DecodeJSON(w, r, &req); err != nil {
+			return err
+		}
+		var v apperr.ValidationError
+		if req.Reviewer == "" {
+			v.Add("reviewer", "is required")
+		}
+		if req.Note == "" {
+			v.Add("note", "is required: say why")
+		}
+		if err := v.Err(); err != nil {
+			return err
+		}
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			return ErrTransferNotFound
+		}
+		t, err := h.store.Get(r.Context(), id)
+		if err != nil {
+			return err
+		}
+		t, err = h.store.Review(r.Context(), t, Verdict{approve, req.Reviewer, req.Note})
+		if err != nil {
+			return err
+		}
+		h.wake()
+		httpx.WriteJSON(w, r, http.StatusOK, t)
+		return nil
+	}
+}

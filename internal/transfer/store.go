@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fiston-user/payments/internal/platform/apperr"
 	"github.com/fiston-user/payments/internal/platform/events"
 	"github.com/fiston-user/payments/internal/platform/telemetry"
+	"github.com/fiston-user/payments/internal/transfer/risk"
 	"github.com/fiston-user/payments/internal/transfer/transferdb"
 	"github.com/fiston-user/payments/internal/transfer/transferevents"
 	"github.com/google/uuid"
@@ -20,11 +22,14 @@ import (
 type Store struct {
 	pool *pgxpool.Pool
 	q    *transferdb.Queries
+	// ReviewTimeout is how long a transfer waits in review before it's
+	// rejected: nobody's money stays held forever.
+	ReviewTimeout time.Duration
 }
 
 // NewStore returns a Store on pool.
 func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool, q: transferdb.New(pool)}
+	return &Store{pool: pool, q: transferdb.New(pool), ReviewTimeout: 24 * time.Hour}
 }
 
 // Create stores a pending transfer, once per idempotency key. If the key was
@@ -85,10 +90,23 @@ type Step struct {
 }
 
 // Advance moves t to next, with its history, and an event if the saga is
-// over, in one transaction. If t changed since we read it: ErrStale.
+// over or waits for a person, in one transaction. If t changed since we read
+// it: ErrStale.
 func (s *Store) Advance(ctx context.Context, t Transfer, next State, step Step) (Transfer, error) {
+	return s.advance(ctx, t, next, step, nil)
+}
+
+// advance is Advance, and runs extra too, if there is one, in the same transaction.
+func (s *Store) advance(
+	ctx context.Context, t Transfer, next State, step Step, extra func(*transferdb.Queries) error,
+) (Transfer, error) {
 	if !t.State.CanBecome(next) {
 		return Transfer{}, fmt.Errorf("transfer %s: %s can't become %s", t.ID, t.State, next)
+	}
+	// In review, it's due again when the review times out.
+	var wait time.Duration
+	if next == InReview {
+		wait = s.ReviewTimeout
 	}
 	var moved Transfer
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -99,6 +117,7 @@ func (s *Store) Advance(ctx context.Context, t Transfer, next State, step Step) 
 			Version:       t.version,
 			NextState:     string(next),
 			FailureReason: t.FailureReason,
+			WaitSeconds:   wait.Seconds(),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrStale
@@ -110,8 +129,10 @@ func (s *Store) Advance(ctx context.Context, t Transfer, next State, step Step) 
 		if err := insertStep(ctx, q, t.ID, step); err != nil {
 			return err
 		}
-		if !next.Final() {
-			return nil
+		if extra != nil {
+			if err := extra(q); err != nil {
+				return err
+			}
 		}
 		return enqueue(ctx, q, moved)
 	})
@@ -153,11 +174,19 @@ func insertStep(ctx context.Context, q *transferdb.Queries, id uuid.UUID, step S
 	})
 }
 
-// enqueue writes a finished transfer's event to the outbox.
+// enqueue writes t's event to the outbox: when its saga is over, or when it
+// waits for a person. The other states have none.
 func enqueue(ctx context.Context, q *transferdb.Queries, t Transfer) error {
-	typ := transferevents.Failed
-	if t.State == Completed {
+	var typ string
+	switch t.State {
+	case Completed:
 		typ = transferevents.Completed
+	case Failed, Reversed:
+		typ = transferevents.Failed
+	case InReview:
+		typ = transferevents.ReviewRequired
+	default:
+		return nil
 	}
 	evt, err := events.New(typ, t.ID, transferevents.Transfer{
 		ID:            t.ID,
@@ -183,4 +212,60 @@ func enqueue(ctx context.Context, q *transferdb.Queries, t Transfer) error {
 		// The trace of the step that finished the saga.
 		TraceContext: telemetry.Carry(ctx),
 	})
+}
+
+// Decide records the risk engine's assessment of transfer id.
+func (s *Store) Decide(ctx context.Context, id uuid.UUID, a risk.Assessment) error {
+	return s.q.InsertDecision(ctx, transferdb.InsertDecisionParams{
+		TransferID: id,
+		Decision:   a.Decision.String(),
+		Reasons:    a.Reasons,
+		DecidedBy:  "risk engine",
+	})
+}
+
+// PaidBefore reports whether user has ever paid wallet.
+func (s *Store) PaidBefore(ctx context.Context, user, wallet uuid.UUID) (bool, error) {
+	paid, err := s.q.PaidBefore(ctx, transferdb.PaidBeforeParams{UserID: user, ToWalletID: wallet})
+	if err != nil {
+		return false, fmt.Errorf("paid before: %w", err)
+	}
+	return paid, nil
+}
+
+// A Verdict is a person's decision on a transfer in review.
+type Verdict struct {
+	Approve  bool
+	Reviewer string
+	Note     string // why, for whoever reads it next
+}
+
+// ErrNotInReview means the transfer isn't waiting for a decision: it never
+// was, or someone, or the timeout, decided first.
+var ErrNotInReview = fmt.Errorf("%w: transfer is not in review", apperr.ErrConflict)
+
+// Review carries out v on t: approved, on to the capture; rejected, back to
+// the sender. The verdict is recorded in the same transaction.
+func (s *Store) Review(ctx context.Context, t Transfer, v Verdict) (Transfer, error) {
+	if t.State != InReview {
+		return Transfer{}, ErrNotInReview
+	}
+	next, outcome, decision := FundsHeld, "succeeded", "approve"
+	if !v.Approve {
+		next, outcome, decision = Compensating, "rejected", "reject"
+		t.FailureReason = "review_rejected"
+	}
+	step := Step{"review", outcome, v.Note}
+	moved, err := s.advance(ctx, t, next, step, func(q *transferdb.Queries) error {
+		return q.InsertDecision(ctx, transferdb.InsertDecisionParams{
+			TransferID: t.ID,
+			Decision:   decision,
+			DecidedBy:  v.Reviewer,
+			Note:       v.Note,
+		})
+	})
+	if errors.Is(err, ErrStale) {
+		return Transfer{}, ErrNotInReview
+	}
+	return moved, err
 }

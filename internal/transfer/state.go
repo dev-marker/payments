@@ -8,6 +8,7 @@ type State string
 
 const (
 	Pending      State = "pending"      // accepted: nothing has moved yet
+	InReview     State = "in_review"    // held, until a person decides, or time runs out
 	FundsHeld    State = "funds_held"   // the money left the sender, into a hold
 	Completed    State = "completed"    // the receiver has it
 	Compensating State = "compensating" // a later step failed: giving the hold back
@@ -17,7 +18,8 @@ const (
 
 // transitions is the state machine: every move a transfer can make.
 var transitions = map[State][]State{
-	Pending:      {FundsHeld, Failed},
+	Pending:      {FundsHeld, InReview, Failed},
+	InReview:     {FundsHeld, Compensating},
 	FundsHeld:    {Completed, Compensating},
 	Compensating: {Reversed},
 }

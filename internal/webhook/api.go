@@ -18,7 +18,7 @@ import (
 )
 
 // EventTypes are the events an endpoint can subscribe to.
-var EventTypes = []string{transferevents.Completed, transferevents.Failed}
+var EventTypes = []string{transferevents.Completed, transferevents.Failed, transferevents.ReviewRequired}
 
 var (
 	ErrEndpointNotFound = fmt.Errorf("webhook endpoint %w", apperr.ErrNotFound)

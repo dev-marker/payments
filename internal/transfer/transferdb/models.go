@@ -22,6 +22,16 @@ type Outbox struct {
 	TraceContext propagation.MapCarrier
 }
 
+type RiskDecision struct {
+	ID         int64
+	TransferID uuid.UUID
+	Decision   string
+	Reasons    []string
+	DecidedBy  string
+	Note       string
+	CreatedAt  time.Time
+}
+
 type Transfer struct {
 	ID             uuid.UUID
 	UserID         uuid.UUID

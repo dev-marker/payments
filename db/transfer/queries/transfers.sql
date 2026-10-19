@@ -19,7 +19,7 @@ UPDATE transfers
 SET next_attempt_at = @lease_until, version = version + 1
 WHERE id IN (
     SELECT id FROM transfers
-    WHERE state IN ('pending', 'funds_held', 'compensating')
+    WHERE state IN ('pending', 'in_review', 'funds_held', 'compensating')
       AND next_attempt_at <= now()
     ORDER BY next_attempt_at
     LIMIT @batch_size
@@ -28,10 +28,12 @@ WHERE id IN (
 RETURNING *;
 
 -- name: AdvanceTransfer :one
--- Only if the transfer is still exactly as we read it.
+-- Only if the transfer is still exactly as we read it. Its next step is due
+-- after wait_seconds: right away, or when a review times out.
 UPDATE transfers
 SET state = @next_state, failure_reason = @failure_reason, attempts = 0,
-    next_attempt_at = now(), version = version + 1, updated_at = now()
+    next_attempt_at = now() + make_interval(secs => @wait_seconds),
+    version = version + 1, updated_at = now()
 WHERE id = @id AND state = @state AND version = @version
 RETURNING *;
 

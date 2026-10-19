@@ -300,9 +300,10 @@ var WalletService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	HoldService_Hold_FullMethodName    = "/wallet.v1.HoldService/Hold"
-	HoldService_Capture_FullMethodName = "/wallet.v1.HoldService/Capture"
-	HoldService_Release_FullMethodName = "/wallet.v1.HoldService/Release"
+	HoldService_Hold_FullMethodName           = "/wallet.v1.HoldService/Hold"
+	HoldService_Capture_FullMethodName        = "/wallet.v1.HoldService/Capture"
+	HoldService_Release_FullMethodName        = "/wallet.v1.HoldService/Release"
+	HoldService_DescribeWallet_FullMethodName = "/wallet.v1.HoldService/DescribeWallet"
 )
 
 // HoldServiceClient is the client API for HoldService service.
@@ -319,6 +320,9 @@ type HoldServiceClient interface {
 	Capture(ctx context.Context, in *CaptureRequest, opts ...grpc.CallOption) (*CaptureResponse, error)
 	// Release gives a hold back to its wallet.
 	Release(ctx context.Context, in *ReleaseRequest, opts ...grpc.CallOption) (*ReleaseResponse, error)
+	// DescribeWallet returns anyone's wallet, and its status: what a transfer
+	// checks before it holds money.
+	DescribeWallet(ctx context.Context, in *DescribeWalletRequest, opts ...grpc.CallOption) (*DescribeWalletResponse, error)
 }
 
 type holdServiceClient struct {
@@ -359,6 +363,16 @@ func (c *holdServiceClient) Release(ctx context.Context, in *ReleaseRequest, opt
 	return out, nil
 }
 
+func (c *holdServiceClient) DescribeWallet(ctx context.Context, in *DescribeWalletRequest, opts ...grpc.CallOption) (*DescribeWalletResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DescribeWalletResponse)
+	err := c.cc.Invoke(ctx, HoldService_DescribeWallet_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HoldServiceServer is the server API for HoldService service.
 // All implementations must embed UnimplementedHoldServiceServer
 // for forward compatibility.
@@ -373,6 +387,9 @@ type HoldServiceServer interface {
 	Capture(context.Context, *CaptureRequest) (*CaptureResponse, error)
 	// Release gives a hold back to its wallet.
 	Release(context.Context, *ReleaseRequest) (*ReleaseResponse, error)
+	// DescribeWallet returns anyone's wallet, and its status: what a transfer
+	// checks before it holds money.
+	DescribeWallet(context.Context, *DescribeWalletRequest) (*DescribeWalletResponse, error)
 	mustEmbedUnimplementedHoldServiceServer()
 }
 
@@ -391,6 +408,9 @@ func (UnimplementedHoldServiceServer) Capture(context.Context, *CaptureRequest) 
 }
 func (UnimplementedHoldServiceServer) Release(context.Context, *ReleaseRequest) (*ReleaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Release not implemented")
+}
+func (UnimplementedHoldServiceServer) DescribeWallet(context.Context, *DescribeWalletRequest) (*DescribeWalletResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DescribeWallet not implemented")
 }
 func (UnimplementedHoldServiceServer) mustEmbedUnimplementedHoldServiceServer() {}
 func (UnimplementedHoldServiceServer) testEmbeddedByValue()                     {}
@@ -467,6 +487,24 @@ func _HoldService_Release_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HoldService_DescribeWallet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DescribeWalletRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HoldServiceServer).DescribeWallet(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HoldService_DescribeWallet_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HoldServiceServer).DescribeWallet(ctx, req.(*DescribeWalletRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // HoldService_ServiceDesc is the grpc.ServiceDesc for HoldService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -485,6 +523,10 @@ var HoldService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Release",
 			Handler:    _HoldService_Release_Handler,
+		},
+		{
+			MethodName: "DescribeWallet",
+			Handler:    _HoldService_DescribeWallet_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

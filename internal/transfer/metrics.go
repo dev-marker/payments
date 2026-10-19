@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"github.com/fiston-user/payments/internal/transfer/risk"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.opentelemetry.io/otel"
@@ -17,6 +18,10 @@ var (
 		Name: "transfer_step_retries_total",
 		Help: "Saga steps that failed, and will be tried again, by step.",
 	}, []string{"step"})
+	riskDecisions = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "risk_decisions_total",
+		Help: "Transfers the risk engine allowed, sent to review, or denied.",
+	}, []string{"decision"})
 )
 
 // Every series starts at zero, so increase() sees the first transfer too.
@@ -26,6 +31,9 @@ func init() {
 	}
 	for _, step := range saga {
 		stepRetries.WithLabelValues(step.name)
+	}
+	for _, d := range []risk.Decision{risk.Allow, risk.Review, risk.Deny} {
+		riskDecisions.WithLabelValues(d.String())
 	}
 }
 

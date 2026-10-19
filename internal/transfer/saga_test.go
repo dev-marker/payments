@@ -11,6 +11,7 @@ import (
 
 	"github.com/fiston-user/payments/internal/platform/postgres"
 	"github.com/fiston-user/payments/internal/transfer"
+	"github.com/fiston-user/payments/internal/transfer/risk"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -55,10 +56,20 @@ func (w *fakeWallet) Release(_ context.Context, t transfer.Transfer) error {
 	return w.step("release", t.ID, "held", "released")
 }
 
+// fakeRisk decides every transfer the same way: Allow, unless a test says.
+type fakeRisk struct {
+	decision risk.Decision
+}
+
+func (f *fakeRisk) Screen(context.Context, transfer.Transfer) (risk.Assessment, error) {
+	return risk.Assessment{Decision: f.decision}, nil
+}
+
 type sagaTest struct {
 	orch   *transfer.Orchestrator
 	store  *transfer.Store
 	wallet *fakeWallet
+	risk   *fakeRisk
 }
 
 // newSaga gives a test its own tables, like the relay's test: temporary
@@ -73,7 +84,7 @@ func newSaga(t *testing.T) sagaTest {
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	for _, table := range []string{"transfers", "transfer_steps", "outbox"} {
+	for _, table := range []string{"transfers", "transfer_steps", "outbox", "risk_decisions"} {
 		sql := fmt.Sprintf(`CREATE TEMPORARY TABLE %s (LIKE public.%[1]s INCLUDING ALL)`, table)
 		if _, err := pool.Exec(t.Context(), sql); err != nil {
 			t.Fatalf("create %s: %v", table, err)
@@ -81,9 +92,10 @@ func newSaga(t *testing.T) sagaTest {
 	}
 	store := transfer.NewStore(pool)
 	wallet := &fakeWallet{holds: map[uuid.UUID]string{}, calls: map[string]int{}}
-	orch := transfer.NewOrchestrator(store, wallet, slog.New(slog.DiscardHandler))
+	screener := &fakeRisk{}
+	orch := transfer.NewOrchestrator(store, wallet, screener, slog.New(slog.DiscardHandler))
 	orch.Backoff = time.Millisecond
-	return sagaTest{orch, store, wallet}
+	return sagaTest{orch, store, wallet, screener}
 }
 
 // create stores a pending transfer of $15.

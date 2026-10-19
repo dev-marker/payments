@@ -15,6 +15,10 @@ func TestTransitions(t *testing.T) {
 		{transfer.Pending, transfer.FundsHeld, true},
 		{transfer.Pending, transfer.Failed, true},
 		{transfer.Pending, transfer.Completed, false}, // nothing arrives without a hold
+		{transfer.Pending, transfer.InReview, true},
+		{transfer.InReview, transfer.FundsHeld, true},    // approved
+		{transfer.InReview, transfer.Compensating, true}, // rejected, or timed out
+		{transfer.InReview, transfer.Completed, false},   // not without the capture
 		{transfer.FundsHeld, transfer.Completed, true},
 		{transfer.FundsHeld, transfer.Compensating, true},
 		{transfer.FundsHeld, transfer.Failed, false}, // not with the money still held

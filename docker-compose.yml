@@ -157,6 +157,7 @@ services:
       TRANSFER_DATABASE_URL: postgres://payments:payments@postgres:5432/transfer?sslmode=disable
       TRANSFER_WALLET_ADDR: dns:///wallet:9081
       TRANSFER_NATS_URL: nats://nats:4222
+      TRANSFER_REDIS_URL: redis://redis:6379/0
       TRANSFER_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
     secrets: [auth_public_key]
     ports: ["8083:8083"]

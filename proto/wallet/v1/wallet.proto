@@ -35,6 +35,9 @@ service HoldService {
   rpc Capture(CaptureRequest) returns (CaptureResponse);
   // Release gives a hold back to its wallet.
   rpc Release(ReleaseRequest) returns (ReleaseResponse);
+  // DescribeWallet returns anyone's wallet, and its status: what a transfer
+  // checks before it holds money.
+  rpc DescribeWallet(DescribeWalletRequest) returns (DescribeWalletResponse);
 }
 
 // Money is an amount in minor units of a currency, like cents. Never a float.
@@ -51,6 +54,8 @@ message Wallet {
   string owner_id = 2;
   string currency = 3;
   google.protobuf.Timestamp create_time = 4;
+  // A frozen wallet can't send or receive money.
+  bool frozen = 5;
 }
 
 message CreateWalletRequest {
@@ -146,4 +151,12 @@ message ReleaseRequest {
 
 message ReleaseResponse {
   Hold hold = 1;
+}
+
+message DescribeWalletRequest {
+  string wallet_id = 1;
+}
+
+message DescribeWalletResponse {
+  Wallet wallet = 1;
 }

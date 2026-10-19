@@ -84,6 +84,7 @@ func walletPB(acc Account) *walletv1.Wallet {
 		Id:         acc.ID.String(),
 		Currency:   acc.Currency,
 		CreateTime: timestamppb.New(acc.CreatedAt),
+		Frozen:     acc.Frozen,
 	}
 	if acc.OwnerID != nil {
 		w.OwnerId = acc.OwnerID.String()
@@ -284,6 +285,22 @@ func (s *HoldServer) Release(
 		return nil, err
 	}
 	return &walletv1.ReleaseResponse{Hold: holdPB(h)}, nil
+}
+
+// DescribeWallet returns anyone's wallet: the Service, as nobody in
+// particular, sees them all.
+func (s *HoldServer) DescribeWallet(
+	ctx context.Context, req *walletv1.DescribeWalletRequest,
+) (*walletv1.DescribeWalletResponse, error) {
+	id, err := parseID("wallet_id", req.GetWalletId())
+	if err != nil {
+		return nil, err
+	}
+	acc, err := s.svc.Wallet(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &walletv1.DescribeWalletResponse{Wallet: walletPB(acc)}, nil
 }
 
 func holdPB(h Hold) *walletv1.Hold {

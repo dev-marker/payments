@@ -1,0 +1,147 @@
+# Risk checks, through the gateway. Send the requests in order, on a fresh
+# database: Alice and Bob sign up, and Alice deposits five thousand dollars.
+@baseUrl = http://localhost:8080
+@password = correct horse battery staple
+@alice = {{aliceLogin.response.body.access_token}}
+@bob = {{bobLogin.response.body.access_token}}
+@alicesWallet = {{aliceWallet.response.body.id}}
+@bobsWallet = {{bobWallet.response.body.id}}
+# The review API, on the transfer service itself: the gateway doesn't route it.
+@reviews = http://localhost:8083/internal/transfers
+
+### Alice signs up
+POST {{baseUrl}}/v1/auth/register
+Content-Type: application/json
+
+{"email": "alice@example.com", "password": "{{password}}"}
+
+### Alice logs in
+# @name aliceLogin
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{"email": "alice@example.com", "password": "{{password}}"}
+
+### Alice's wallet
+# @name aliceWallet
+POST {{baseUrl}}/v1/wallets
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{"currency": "USD"}
+
+### Five thousand dollars
+POST {{baseUrl}}/v1/wallets/{{alicesWallet}}/deposits
+Authorization: Bearer {{alice}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"amount": 500000, "currency": "USD"}
+
+### Bob signs up
+POST {{baseUrl}}/v1/auth/register
+Content-Type: application/json
+
+{"email": "bob@example.com", "password": "{{password}}"}
+
+### Bob logs in
+# @name bobLogin
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{"email": "bob@example.com", "password": "{{password}}"}
+
+### Bob's wallet
+# @name bobWallet
+POST {{baseUrl}}/v1/wallets
+Authorization: Bearer {{bob}}
+Content-Type: application/json
+
+{"currency": "USD"}
+
+### Alice pays Bob fifteen dollars
+# @name small
+POST {{baseUrl}}/v1/transfers
+Authorization: Bearer {{alice}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"from": "{{alicesWallet}}", "to": "{{bobsWallet}}", "amount": 1500, "currency": "USD"}
+
+### Where is it?
+GET {{baseUrl}}{{small.response.headers.Location}}
+Authorization: Bearer {{alice}}
+
+### Bob pays Alice a dollar, again and again
+# @name burst
+POST {{baseUrl}}/v1/transfers
+Authorization: Bearer {{bob}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"from": "{{bobsWallet}}", "to": "{{alicesWallet}}", "amount": 100, "currency": "USD"}
+
+### And the last one?
+GET {{baseUrl}}{{burst.response.headers.Location}}
+Authorization: Bearer {{bob}}
+
+### Alice pays Bob fifteen hundred dollars
+# @name big
+POST {{baseUrl}}/v1/transfers
+Authorization: Bearer {{alice}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"from": "{{alicesWallet}}", "to": "{{bobsWallet}}", "amount": 150000, "currency": "USD"}
+
+### Where is the big one?
+GET {{baseUrl}}{{big.response.headers.Location}}
+Authorization: Bearer {{alice}}
+
+### Alice's balance
+GET {{baseUrl}}/v1/wallets/{{alicesWallet}}/balance
+Authorization: Bearer {{alice}}
+
+### Approve it, through the gateway?
+POST {{baseUrl}}/internal/transfers/{{big.response.body.id}}/approve
+Content-Type: application/json
+
+{"reviewer": "dana@example.com", "note": "Called Alice: she's buying Bob's car."}
+
+### Approve it
+POST {{reviews}}/{{big.response.body.id}}/approve
+Content-Type: application/json
+
+{"reviewer": "dana@example.com", "note": "Called Alice: she's buying Bob's car."}
+
+### Alice pays Bob twelve hundred dollars
+# @name big2
+POST {{baseUrl}}/v1/transfers
+Authorization: Bearer {{alice}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"from": "{{alicesWallet}}", "to": "{{bobsWallet}}", "amount": 120000, "currency": "USD"}
+
+### Reject it
+POST {{reviews}}/{{big2.response.body.id}}/reject
+Content-Type: application/json
+
+{"reviewer": "dana@example.com", "note": "Alice didn't send it: someone has her password."}
+
+### Where is the second one?
+GET {{baseUrl}}{{big2.response.headers.Location}}
+Authorization: Bearer {{alice}}
+
+### Alice pays Bob twenty dollars
+# @name tiny
+POST {{baseUrl}}/v1/transfers
+Authorization: Bearer {{alice}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"from": "{{alicesWallet}}", "to": "{{bobsWallet}}", "amount": 2000, "currency": "USD"}
+
+### And that one?
+GET {{baseUrl}}{{tiny.response.headers.Location}}
+Authorization: Bearer {{alice}}

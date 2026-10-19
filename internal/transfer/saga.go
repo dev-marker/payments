@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fiston-user/payments/internal/platform/telemetry"
+	"github.com/fiston-user/payments/internal/transfer/risk"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -22,6 +23,7 @@ var saga = map[State]struct {
 	next, rejected State
 }{
 	Pending:      {"hold", Wallet.Hold, FundsHeld, Failed},
+	InReview:     {"review", timedOut, "", Compensating},
 	FundsHeld:    {"capture", Wallet.Capture, Completed, Compensating},
 	Compensating: {"release", Wallet.Release, Reversed, ""},
 }
@@ -31,6 +33,7 @@ var saga = map[State]struct {
 type Orchestrator struct {
 	store     *Store
 	wallet    Wallet
+	screener  Screener
 	logger    *slog.Logger
 	wake      chan struct{}
 	BatchSize int           // transfers per claim
@@ -40,9 +43,9 @@ type Orchestrator struct {
 }
 
 // NewOrchestrator returns an Orchestrator with sensible defaults.
-func NewOrchestrator(store *Store, wallet Wallet, logger *slog.Logger) *Orchestrator {
+func NewOrchestrator(store *Store, wallet Wallet, screener Screener, logger *slog.Logger) *Orchestrator {
 	return &Orchestrator{
-		store: store, wallet: wallet, logger: logger, wake: make(chan struct{}, 1),
+		store: store, wallet: wallet, screener: screener, logger: logger, wake: make(chan struct{}, 1),
 		BatchSize: 10, Lease: 10 * time.Second, Poll: time.Second, Backoff: time.Second,
 	}
 }
@@ -97,11 +100,14 @@ func (o *Orchestrator) step(ctx context.Context, t Transfer) {
 		trace.WithAttributes(attribute.String("transfer.id", t.ID.String())))
 	defer span.End()
 	log := o.logger.With("transfer", t.ID, "step", s.name)
-	err := s.run(o.wallet, ctx, t)
+	next, err := o.screen(ctx, t, s.next)
+	if err == nil {
+		err = s.run(o.wallet, ctx, t)
+	}
 	var rejection *Rejection
 	switch {
 	case err == nil:
-		t, err = o.store.Advance(ctx, t, s.next, Step{s.name, "succeeded", ""})
+		t, err = o.store.Advance(ctx, t, next, Step{s.name, "succeeded", ""})
 		if err == nil {
 			log.InfoContext(ctx, "step succeeded", "state", t.State)
 			finished(t)
@@ -133,4 +139,34 @@ func (o *Orchestrator) step(ctx context.Context, t Transfer) {
 func (o *Orchestrator) backoff(attempts int32) time.Duration {
 	d := min(o.Backoff<<min(attempts, 16), time.Minute)
 	return (d/2 + rand.N(d/2+1)).Round(time.Millisecond)
+}
+
+// screen asks about a pending transfer before any money moves, and records
+// the answer. A deny is a rejection: the transfer fails. A review holds the
+// money all the same, and then waits, in review, instead of capturing it.
+func (o *Orchestrator) screen(ctx context.Context, t Transfer, next State) (State, error) {
+	if t.State != Pending {
+		return next, nil
+	}
+	a, err := o.screener.Screen(ctx, t)
+	if err != nil {
+		return "", err
+	}
+	if err := o.store.Decide(ctx, t.ID, a); err != nil {
+		return "", err
+	}
+	riskDecisions.WithLabelValues(a.Decision.String()).Inc()
+	switch a.Decision {
+	case risk.Deny:
+		return "", &Rejection{Reason: "risk_declined"}
+	case risk.Review:
+		return InReview, nil
+	}
+	return next, nil
+}
+
+// timedOut is the review step: the orchestrator only claims a transfer in
+// review once its review has timed out, and then rejects it.
+func timedOut(Wallet, context.Context, Transfer) error {
+	return &Rejection{Reason: "review_timed_out"}
 }

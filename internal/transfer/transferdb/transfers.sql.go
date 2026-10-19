@@ -16,24 +16,28 @@ import (
 const advanceTransfer = `-- name: AdvanceTransfer :one
 UPDATE transfers
 SET state = $1, failure_reason = $2, attempts = 0,
-    next_attempt_at = now(), version = version + 1, updated_at = now()
-WHERE id = $3 AND state = $4 AND version = $5
+    next_attempt_at = now() + make_interval(secs => $3),
+    version = version + 1, updated_at = now()
+WHERE id = $4 AND state = $5 AND version = $6
 RETURNING id, user_id, idempotency_key, from_wallet_id, to_wallet_id, amount, currency, state, failure_reason, attempts, next_attempt_at, version, created_at, updated_at, trace_context
 `
 
 type AdvanceTransferParams struct {
 	NextState     string
 	FailureReason string
+	WaitSeconds   float64
 	ID            uuid.UUID
 	State         string
 	Version       int32
 }
 
-// Only if the transfer is still exactly as we read it.
+// Only if the transfer is still exactly as we read it. Its next step is due
+// after wait_seconds: right away, or when a review times out.
 func (q *Queries) AdvanceTransfer(ctx context.Context, arg AdvanceTransferParams) (Transfer, error) {
 	row := q.db.QueryRow(ctx, advanceTransfer,
 		arg.NextState,
 		arg.FailureReason,
+		arg.WaitSeconds,
 		arg.ID,
 		arg.State,
 		arg.Version,
@@ -64,7 +68,7 @@ UPDATE transfers
 SET next_attempt_at = $1, version = version + 1
 WHERE id IN (
     SELECT id FROM transfers
-    WHERE state IN ('pending', 'funds_held', 'compensating')
+    WHERE state IN ('pending', 'in_review', 'funds_held', 'compensating')
       AND next_attempt_at <= now()
     ORDER BY next_attempt_at
     LIMIT $2
