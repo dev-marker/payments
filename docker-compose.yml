@@ -119,6 +119,8 @@ services:
       WALLET_REDIS_URL: redis://redis:6379/0
       WALLET_NATS_URL: nats://nats:4222
       WALLET_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
+      # Every fifteen seconds here, to watch it work. By default: daily, at 02:00 UTC.
+      WALLET_RECONCILE_EVERY: 15s
     secrets: [auth_public_key]
     ports: ["8081:8081"]
     depends_on:

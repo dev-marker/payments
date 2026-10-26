@@ -238,6 +238,16 @@ type IdempotencyKey struct {
 	ExpiresAt    time.Time          `json:"expires_at"`
 }
 
+type JobRun struct {
+	ID         int64              `json:"id"`
+	Job        string             `json:"job"`
+	Slot       time.Time          `json:"slot"`
+	Status     string             `json:"status"`
+	Summary    []byte             `json:"summary"`
+	StartedAt  time.Time          `json:"started_at"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+}
+
 type Outbox struct {
 	Seq          int64                  `json:"seq"`
 	EventID      uuid.UUID              `json:"event_id"`

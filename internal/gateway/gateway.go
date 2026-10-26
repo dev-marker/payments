@@ -37,6 +37,7 @@ const (
 	walletTimeout   = 3 * time.Second
 	transferTimeout = 3 * time.Second
 	webhookTimeout  = 3 * time.Second
+	reportTimeout   = time.Minute // a year of entries
 )
 
 // New returns the gateway's handler.
@@ -64,6 +65,8 @@ func New(cfg Config) http.Handler {
 	mux.Handle("GET /v1/wallets/{id}", private(walletTimeout, rpc(wallet.get)))
 	mux.Handle("GET /v1/wallets/{id}/balance", private(walletTimeout, rpc(wallet.balance)))
 	mux.Handle("POST /v1/wallets/{id}/deposits", private(walletTimeout, rpc(wallet.deposit)))
+	// Statements are files, not messages: the wallet's REST API streams them.
+	mux.Handle("GET /v1/wallets/{id}/statement.csv", private(reportTimeout, newProxy(cfg.WalletAPI)))
 	// Quotes and conversions: only our users call them, so they stay REST.
 	mux.Handle("/v1/fx/", private(walletTimeout, newProxy(cfg.WalletAPI)))
 

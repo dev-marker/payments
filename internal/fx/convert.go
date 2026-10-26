@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
+	"strings"
 )
 
 // exponents is how many digits each currency has after the decimal point, from
@@ -87,4 +89,26 @@ func pow10(n int) *big.Int {
 // rounded up: 50 basis points of 54.26 dollars is 28 cents, not 27.13.
 func Fee(amount, bps int64) int64 {
 	return (amount*bps + 9_999) / 10_000
+}
+
+// Format writes amount, in minor units of currency, as a decimal with the
+// currency's own number of places: 1500 USD is 15.00, -5 USD is -0.05, 1500 JPY
+// is 1500, and 1500 KWD is 1.500. It works on the digits: floats never touch money.
+func Format(amount int64, currency string) (string, error) {
+	exp, ok := exponents[currency]
+	if !ok {
+		return "", fmt.Errorf("fx: unknown currency %q", currency)
+	}
+	digits, sign := strconv.FormatInt(amount, 10), ""
+	if amount < 0 {
+		digits, sign = digits[1:], "-"
+	}
+	if exp == 0 {
+		return sign + digits, nil
+	}
+	if len(digits) <= exp {
+		digits = strings.Repeat("0", exp-len(digits)+1) + digits // 5 cents is 005
+	}
+	cut := len(digits) - exp
+	return sign + digits[:cut] + "." + digits[cut:], nil
 }

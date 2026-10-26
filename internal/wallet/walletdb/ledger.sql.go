@@ -7,9 +7,31 @@ package walletdb
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+const balanceBefore = `-- name: BalanceBefore :one
+SELECT coalesce(sum(CASE WHEN e.direction = a.normal_balance THEN e.amount ELSE -e.amount END), 0)::bigint
+FROM entries e
+JOIN accounts a ON a.id = e.account_id
+WHERE e.account_id = $1 AND e.created_at < $2
+`
+
+type BalanceBeforeParams struct {
+	AccountID uuid.UUID `json:"account_id"`
+	Before    time.Time `json:"before"`
+}
+
+// An account's balance from its entries before a moment: a statement's
+// opening balance.
+func (q *Queries) BalanceBefore(ctx context.Context, arg BalanceBeforeParams) (int64, error) {
+	row := q.db.QueryRow(ctx, balanceBefore, arg.AccountID, arg.Before)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
 
 const createEntry = `-- name: CreateEntry :one
 INSERT INTO entries (transaction_id, account_id, direction, amount, currency)
@@ -91,6 +113,118 @@ func (q *Queries) ListEntriesByAccount(ctx context.Context, arg ListEntriesByAcc
 			&i.Amount,
 			&i.Currency,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const statementPage = `-- name: StatementPage :many
+SELECT e.id, e.created_at, e.transaction_id, t.description, e.direction, e.amount
+FROM entries e
+JOIN transactions t ON t.id = e.transaction_id
+WHERE e.account_id = $1
+  AND e.created_at >= $2 AND e.created_at < $3
+  AND e.id > $4
+ORDER BY e.id
+LIMIT $5
+`
+
+type StatementPageParams struct {
+	AccountID uuid.UUID `json:"account_id"`
+	Since     time.Time `json:"since"`
+	Until     time.Time `json:"until"`
+	AfterID   int64     `json:"after_id"`
+	PageSize  int32     `json:"page_size"`
+}
+
+type StatementPageRow struct {
+	ID            int64          `json:"id"`
+	CreatedAt     time.Time      `json:"created_at"`
+	TransactionID uuid.UUID      `json:"transaction_id"`
+	Description   string         `json:"description"`
+	Direction     EntryDirection `json:"direction"`
+	Amount        int64          `json:"amount"`
+}
+
+// A page of an account's entries posted in [since, until), oldest first, after
+// the entry after_id: keyset pagination, as fast for the last page as the first.
+func (q *Queries) StatementPage(ctx context.Context, arg StatementPageParams) ([]StatementPageRow, error) {
+	rows, err := q.db.Query(ctx, statementPage,
+		arg.AccountID,
+		arg.Since,
+		arg.Until,
+		arg.AfterID,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StatementPageRow{}
+	for rows.Next() {
+		var i StatementPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.TransactionID,
+			&i.Description,
+			&i.Direction,
+			&i.Amount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const trialBalance = `-- name: TrialBalance :many
+SELECT currency, coalesce(account, 'total')::text AS account,
+       sum(debit)::bigint AS debits, sum(credit)::bigint AS credits
+FROM (
+    SELECT a.currency, CASE a.kind WHEN 'wallet' THEN 'customer wallets' ELSE a.name END AS account,
+           CASE e.direction WHEN 'debit' THEN e.amount ELSE 0 END AS debit,
+           CASE e.direction WHEN 'credit' THEN e.amount ELSE 0 END AS credit
+    FROM entries e
+    JOIN accounts a ON a.id = e.account_id
+    WHERE e.created_at < $1
+) AS lines
+GROUP BY currency, ROLLUP (account)
+ORDER BY currency, account IS NULL, account
+`
+
+type TrialBalanceRow struct {
+	Currency string `json:"currency"`
+	Account  string `json:"account"`
+	Debits   int64  `json:"debits"`
+	Credits  int64  `json:"credits"`
+}
+
+// Every ledger account's debits and credits before a moment, with customer
+// wallets as one account, and a total per currency, where the two must match.
+func (q *Queries) TrialBalance(ctx context.Context, before time.Time) ([]TrialBalanceRow, error) {
+	rows, err := q.db.Query(ctx, trialBalance, before)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TrialBalanceRow{}
+	for rows.Next() {
+		var i TrialBalanceRow
+		if err := rows.Scan(
+			&i.Currency,
+			&i.Account,
+			&i.Debits,
+			&i.Credits,
 		); err != nil {
 			return nil, err
 		}

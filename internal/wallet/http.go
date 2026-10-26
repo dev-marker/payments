@@ -2,10 +2,13 @@ package wallet
 
 import (
 	"context"
+	"encoding/csv"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/fiston-user/payments/internal/fx"
+	"github.com/fiston-user/payments/internal/platform/apperr"
 	"github.com/fiston-user/payments/internal/platform/authn"
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/idempotency"
@@ -86,6 +89,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /v1/wallets/{id}/balance", httpx.HandlerFunc(h.getBalance))
 	mux.Handle("POST /v1/wallets/{id}/deposits", httpx.HandlerFunc(h.deposit))
 	mux.Handle("GET /v1/wallets/{id}/entries", httpx.HandlerFunc(h.listEntries))
+	mux.Handle("GET /v1/wallets/{id}/statement.csv", httpx.HandlerFunc(h.statement))
 	mux.Handle("POST /v1/transfers", httpx.HandlerFunc(h.transfer))
 	mux.Handle("POST /v1/fx/quotes", httpx.HandlerFunc(h.quote))
 	mux.Handle("POST /v1/fx/conversions", httpx.HandlerFunc(h.convert))
@@ -300,4 +304,116 @@ func (h *Handler) convert(w http.ResponseWriter, r *http.Request) error {
 		}
 		return idempotency.JSON(http.StatusCreated, toQuote(used))
 	})
+}
+
+// RegisterInternal adds our finance team's reports to mux. The gateway never
+// routes /internal/: only our own network can reach it.
+func (h *Handler) RegisterInternal(mux *http.ServeMux) {
+	mux.Handle("GET /internal/trial-balance.csv", httpx.HandlerFunc(h.trialBalance))
+}
+
+// statement sends a wallet's statement for the days from and to, as CSV. It
+// streams: the first lines leave before the last ones are read.
+func (h *Handler) statement(w http.ResponseWriter, r *http.Request) error {
+	id, err := walletID(r)
+	if err != nil {
+		return err
+	}
+	from, to, err := period(r)
+	if err != nil {
+		return err
+	}
+	lines, err := h.as(r).Statement(r.Context(), id, from, to)
+	if err != nil {
+		return err
+	}
+
+	// The status goes out with the first bytes: from here on, an error can
+	// only cut the download short.
+	out := download(w, "statement-"+from.Format(time.DateOnly)+"-to-"+to.Format(time.DateOnly)+".csv")
+	out.Write(StatementHeader)
+	for line, err := range lines {
+		var rec []string
+		if err == nil {
+			rec, err = line.Record()
+		}
+		if err == nil {
+			err = out.Write(rec)
+		}
+		if err != nil {
+			abort(r, err)
+		}
+	}
+	out.Flush()
+	if err := out.Error(); err != nil {
+		abort(r, err)
+	}
+	return nil
+}
+
+// download starts sending a CSV file, called name.
+func download(w http.ResponseWriter, name string) *csv.Writer {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	w.Header().Set("Cache-Control", "no-store") // someone's money: never in a shared cache
+	return csv.NewWriter(w)
+}
+
+// abort ends a response that has begun: the client sees a broken download,
+// never a short file that looks complete.
+func abort(r *http.Request, err error) {
+	slog.ErrorContext(r.Context(), "download aborted", "path", r.URL.Path, "err", err)
+	panic(http.ErrAbortHandler)
+}
+
+// date reads a query parameter that's a day, like 2026-11-30, in UTC. A
+// problem goes into v.
+func date(r *http.Request, key string, v *apperr.ValidationError) time.Time {
+	d, err := time.Parse(time.DateOnly, r.URL.Query().Get(key))
+	if err != nil {
+		v.Add(key, "must be a date, like 2026-11-30")
+	}
+	return d
+}
+
+// period reads a statement's first and last days, from and to, both included:
+// a year at most.
+func period(r *http.Request) (from, to time.Time, err error) {
+	var v apperr.ValidationError
+	from, to = date(r, "from", &v), date(r, "to", &v)
+	if v.Err() == nil && (to.Before(from) || to.After(from.AddDate(1, 0, 0))) {
+		v.Add("to", "must be on or after from, and at most a year later")
+	}
+	return from, to, v.Err()
+}
+
+// trialBalance sends finance the trial balance at the end of a day, as CSV:
+// every ledger account's debits, credits and balance, and a total for each
+// currency, whose balance must be zero.
+func (h *Handler) trialBalance(w http.ResponseWriter, r *http.Request) error {
+	var v apperr.ValidationError
+	day := date(r, "date", &v)
+	if err := v.Err(); err != nil {
+		return err
+	}
+	lines, err := h.svc.TrialBalance(r.Context(), day.AddDate(0, 0, 1))
+	if err != nil {
+		return err
+	}
+	records := [][]string{{"currency", "account", "debits", "credits", "balance"}}
+	for _, l := range lines {
+		rec := []string{l.Currency, l.Account}
+		for _, amount := range []int64{l.Debits, l.Credits, l.Debits - l.Credits} {
+			s, err := fx.Format(amount, l.Currency)
+			if err != nil {
+				return err // nothing is sent yet: still a 500
+			}
+			rec = append(rec, s)
+		}
+		records = append(records, rec)
+	}
+	if err := download(w, "trial-balance-"+day.Format(time.DateOnly)+".csv").WriteAll(records); err != nil {
+		abort(r, err)
+	}
+	return nil
 }

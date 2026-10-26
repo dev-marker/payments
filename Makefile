@@ -57,7 +57,7 @@ loadtest:
 		-e BASE_URL=http://host.docker.internal:8080 \
 		grafana/k6:2.4.0 run /loadtest/transfers.js
 
-.PHONY: run-wallet run-auth run-transfer run-notification dead-letters replay-dead-letters run-gateway keys
+.PHONY: run-wallet run-auth run-transfer run-notification dead-letters replay-dead-letters run-gateway keys reconciliation
 
 # Run the wallet service against the local database, stamped with a git version.
 # Extra flags for a service go in ARGS: make run-wallet ARGS=-migrate
@@ -98,6 +98,13 @@ dead-letters:
 replay-dead-letters:
 	@go build -ldflags "-X main.version=$(VERSION)" -o bin/notification ./cmd/notification
 	@NOTIFICATION_DATABASE_URL="$(NOTIFICATION_DB_URL)" ./bin/notification -replay-dead-letters
+
+# What the last reconciliation found: nothing at all, or exactly what's off.
+reconciliation:
+	@docker compose exec -T postgres psql -U payments -d wallet -c \
+		"SELECT d.* FROM job_runs, jsonb_to_recordset(summary->'discrepancies') \
+		AS d(\"check\" text, ref text, currency text, expected bigint, actual bigint) \
+		WHERE id = (SELECT max(id) FROM job_runs WHERE job = 'reconcile' AND status = 'succeeded')"
 
 # The public API on port 8080, in front of the others.
 run-gateway:

@@ -23,6 +23,7 @@ import (
 	"github.com/fiston-user/payments/internal/platform/health"
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/idempotency"
+	"github.com/fiston-user/payments/internal/platform/jobs"
 	"github.com/fiston-user/payments/internal/platform/logging"
 	"github.com/fiston-user/payments/internal/platform/natsx"
 	"github.com/fiston-user/payments/internal/platform/outbox"
@@ -96,6 +97,7 @@ func main() {
 	}
 	logger.Info("connected to postgres", "max_conns", pool.Config().MaxConns)
 	outbox.RegisterMetrics(pool)
+	wallet.RegisterMetrics(pool)
 
 	// Redis is only a cache in front of Postgres. If it's down, we start
 	// anyway, without the cache, and use it as soon as it's back.
@@ -154,14 +156,19 @@ func main() {
 		logger.Error("fx rates", "err", err)
 		os.Exit(1)
 	}
-	svc := wallet.NewService(wallet.NewStore(pool)).WithFX(wallet.FX{
+	store := wallet.NewStore(pool)
+	svc := wallet.NewService(store).WithFX(wallet.FX{
 		Rates: rates, QuoteTTL: cfg.FXQuoteTTL, FeeBps: int64(cfg.FXFeeBps),
 	})
 	keys := idempotency.NewStore(pool, rdb)
+	handler := wallet.NewHandler(svc, keys)
 	api := http.NewServeMux()
-	wallet.NewHandler(svc, keys).Register(api)
+	handler.Register(api)
 	api.HandleFunc("/", httpx.NotFound)
 	mux.Handle("/v1/", verifier.Require(httpx.Routes(api)))
+	// Reports for finance: no user token, since users never reach them.
+	// Episode 21 puts mTLS in front.
+	handler.RegisterInternal(mux)
 	mux.HandleFunc("/", httpx.NotFound)
 
 	// The same service, over gRPC, for our other services. Every RPC needs an
@@ -199,6 +206,19 @@ func main() {
 
 	// Forget expired idempotency keys, once an hour.
 	go keys.Cleanup(ctx, time.Hour)
+
+	// Scheduled jobs: every replica campaigns, and only the leader runs them.
+	// They stop the moment we're asked to, so another replica takes over while
+	// we drain.
+	runner := jobs.NewRunner(pool, logger, jobs.Job{
+		Name:  "reconcile",
+		Every: cfg.ReconcileEvery,
+		At:    cfg.ReconcileAt,
+		Run:   wallet.ReconcileJob(store, logger),
+	})
+	elector := jobs.NewElector(cfg.DatabaseURL, "wallet-jobs", logger)
+	var leader sync.WaitGroup
+	leader.Go(func() { elector.Run(ctx, runner.Run) })
 
 	// The outbox relay publishes our events. It has a context of its own, so
 	// it keeps publishing while the servers drain, and stops after them.
@@ -249,7 +269,8 @@ func main() {
 	// out on the next start: at least once.
 	stopRelay()
 	relay.Wait()
-	logger.Info("outbox relay stopped")
+	leader.Wait()
+	logger.Info("outbox relay and jobs stopped")
 
 	// Close the connections last: requests that were still finishing needed them.
 	nc.Close()

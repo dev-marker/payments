@@ -1,0 +1,90 @@
+# Reports, through the gateway. Send the requests in order, on a fresh
+# database: Alice and Bob sign up, Alice deposits, and they pay each other.
+@baseUrl = http://localhost:8080
+@password = correct horse battery staple
+@alice = {{aliceLogin.response.body.access_token}}
+@bob = {{bobLogin.response.body.access_token}}
+@alicesWallet = {{aliceWallet.response.body.id}}
+@bobsWallet = {{bobWallet.response.body.id}}
+# A statement's days, in UTC, both included.
+@from = 2026-11-01
+@to = 2026-11-30
+
+### Alice signs up
+POST {{baseUrl}}/v1/auth/register
+Content-Type: application/json
+
+{"email": "alice@example.com", "password": "{{password}}"}
+
+### Alice logs in
+# @name aliceLogin
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{"email": "alice@example.com", "password": "{{password}}"}
+
+### Alice's wallet
+# @name aliceWallet
+POST {{baseUrl}}/v1/wallets
+Authorization: Bearer {{alice}}
+Content-Type: application/json
+
+{"currency": "USD"}
+
+### Five hundred dollars
+# @name deposit
+POST {{baseUrl}}/v1/wallets/{{alicesWallet}}/deposits
+Authorization: Bearer {{alice}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"amount": 50000, "currency": "USD"}
+
+### Bob signs up
+POST {{baseUrl}}/v1/auth/register
+Content-Type: application/json
+
+{"email": "bob@example.com", "password": "{{password}}"}
+
+### Bob logs in
+# @name bobLogin
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{"email": "bob@example.com", "password": "{{password}}"}
+
+### Bob's wallet
+# @name bobWallet
+POST {{baseUrl}}/v1/wallets
+Authorization: Bearer {{bob}}
+Content-Type: application/json
+
+{"currency": "USD"}
+
+### Alice pays Bob twenty-five dollars
+POST {{baseUrl}}/v1/transfers
+Authorization: Bearer {{alice}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"from": "{{alicesWallet}}", "to": "{{bobsWallet}}", "amount": 2500, "currency": "USD"}
+
+### Bob pays Alice ten dollars
+POST {{baseUrl}}/v1/transfers
+Authorization: Bearer {{bob}}
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"from": "{{bobsWallet}}", "to": "{{alicesWallet}}", "amount": 1000, "currency": "USD"}
+
+### Alice's statement
+GET {{baseUrl}}/v1/wallets/{{alicesWallet}}/statement.csv?from={{from}}&to={{to}}
+Authorization: Bearer {{alice}}
+
+### Bob asks for Alice's statement
+GET {{baseUrl}}/v1/wallets/{{alicesWallet}}/statement.csv?from={{from}}&to={{to}}
+Authorization: Bearer {{bob}}
+
+### Alice's balance
+GET {{baseUrl}}/v1/wallets/{{alicesWallet}}/balance
+Authorization: Bearer {{alice}}

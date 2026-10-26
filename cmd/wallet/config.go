@@ -25,6 +25,8 @@ type Config struct {
 	NATSReplicas    int           // copies of the WALLET stream: 1 locally, 3 in production
 	FXQuoteTTL      time.Duration // how long a quote's price holds
 	FXFeeBps        int           // our fee on conversions, in basis points
+	ReconcileEvery  time.Duration // how often the ledger is reconciled
+	ReconcileAt     time.Duration // how far into each period: 2h, with 24h, is 02:00 UTC
 }
 
 // loadConfig reads the configuration. Everything has a sensible default except
@@ -45,6 +47,8 @@ func loadConfig(env *config.Env) (Config, error) {
 		NATSReplicas:    env.Int("WALLET_NATS_REPLICAS", 1),
 		FXQuoteTTL:      env.Duration("WALLET_FX_QUOTE_TTL", 30*time.Second),
 		FXFeeBps:        env.Int("WALLET_FX_FEE_BPS", 50),
+		ReconcileEvery:  env.Duration("WALLET_RECONCILE_EVERY", 24*time.Hour),
+		ReconcileAt:     env.Duration("WALLET_RECONCILE_AT", 2*time.Hour),
 	}
 
 	// Text logs for humans in development, JSON for log collectors in production.
@@ -62,6 +66,9 @@ func loadConfig(env *config.Env) (Config, error) {
 	}
 	if c.FXFeeBps < 0 || c.FXFeeBps > 1000 {
 		env.Invalid("WALLET_FX_FEE_BPS", "must be between 0 and 1000: ten percent")
+	}
+	if c.ReconcileEvery < time.Second {
+		env.Invalid("WALLET_RECONCILE_EVERY", "must be at least 1s")
 	}
 	return c, env.Err()
 }

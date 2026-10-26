@@ -27,8 +27,13 @@
     {"title": "Outbox lag", "type": "timeseries",
      "gridPos": {"x": 12, "y": 9, "w": 6, "h": 8}, "fieldConfig": {"defaults": {"unit": "s"}},
      "targets": [{"legendFormat": "{{service}}", "expr": "max by (service) (outbox_lag_seconds)"}]},
-    {"title": "Notification dead letters", "type": "stat",
-     "gridPos": {"x": 18, "y": 9, "w": 6, "h": 8},
-     "targets": [{"expr": "sum(notification_dead_letters_total)"}]}
+    {"title": "Dead letters", "type": "stat",
+     "gridPos": {"x": 18, "y": 9, "w": 3, "h": 8},
+     "targets": [{"expr": "sum(notification_dead_letters_total)"}]},
+    {"title": "Discrepancies", "type": "stat",
+     "gridPos": {"x": 21, "y": 9, "w": 3, "h": 8},
+     "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute",
+      "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
+     "targets": [{"expr": "max(reconciliation_discrepancies)", "instant": true}]}
   ]
 }
