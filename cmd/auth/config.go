@@ -21,6 +21,8 @@ type Config struct {
 	PrivateKeyFile  string
 	AccessTTL       time.Duration
 	RefreshTTL      time.Duration
+	TLSDir          string // our certificate and key, and our CA's: for mTLS
+	InternalAddr    string // the internal routes, over mTLS
 }
 
 // loadConfig reads the configuration. Everything has a sensible default except
@@ -37,6 +39,8 @@ func loadConfig(env *config.Env) (Config, error) {
 		PrivateKeyFile:  env.Required("AUTH_PRIVATE_KEY_FILE"),
 		AccessTTL:       env.Duration("AUTH_ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTTL:      env.Duration("AUTH_REFRESH_TOKEN_TTL", 30*24*time.Hour),
+		TLSDir:          env.String("AUTH_TLS_DIR", "secrets/tls/auth"),
+		InternalAddr:    env.String("AUTH_INTERNAL_ADDR", ":9082"),
 	}
 
 	// Text logs for humans in development, JSON for log collectors in production.

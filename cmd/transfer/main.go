@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"github.com/fiston-user/payments/internal/platform/health"
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/logging"
+	"github.com/fiston-user/payments/internal/platform/mtls"
 	"github.com/fiston-user/payments/internal/platform/natsx"
 	"github.com/fiston-user/payments/internal/platform/outbox"
 	"github.com/fiston-user/payments/internal/platform/postgres"
@@ -31,6 +33,7 @@ import (
 	"github.com/fiston-user/payments/internal/wallet/walletclient"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"google.golang.org/grpc/credentials"
 )
 
 // version is stamped at build time: go build -ldflags "-X main.version=v1.2.3".
@@ -118,9 +121,16 @@ func main() {
 		os.Exit(1)
 	}
 	verifier := authn.NewVerifier(pub)
+	// Our certificate, and our CA's: for mTLS with our other services.
+	certs, err := mtls.Load(cfg.TLSDir)
+	if err != nil {
+		logger.Error("load certificates", "err", err)
+		os.Exit(1)
+	}
 
-	// The wallet's gRPC API. Each call gets three seconds, retries included.
-	wallet, err := walletclient.New(cfg.WalletAddr, 3*time.Second)
+	// The wallet's gRPC API, over mTLS. Each call gets three seconds, retries included.
+	creds := credentials.NewTLS(certs.Client("wallet"))
+	wallet, err := walletclient.New(cfg.WalletAddr, creds, 3*time.Second)
 	if err != nil {
 		logger.Error("wallet client", "err", err)
 		os.Exit(1)
@@ -132,7 +142,7 @@ func main() {
 		logger.Error("redis", "err", err)
 		os.Exit(1)
 	}
-	rates, err := fx.DevRates()
+	rates, err := fx.DevRates(cfg.Env)
 	if err != nil {
 		logger.Error("fx rates", "err", err)
 		os.Exit(1)
@@ -158,9 +168,13 @@ func main() {
 	handler.Register(api)
 	api.HandleFunc("/", httpx.NotFound)
 	mux.Handle("/v1/", verifier.Require(httpx.Routes(api)))
-	// The review API: no user token, since users never reach it. Episode 21
-	// puts mTLS in front, and names the reviewer from their sign-in.
-	handler.RegisterInternal(mux)
+	// The review API, over mTLS: only our back office's tools, ops, may call
+	// it, for a reviewer who signed in, with the reviewer role.
+	internal := http.NewServeMux()
+	handler.RegisterInternal(internal)
+	internal.HandleFunc("/", httpx.NotFound)
+	mux.Handle("/internal/", httpx.Chain(httpx.Routes(internal),
+		mtls.Allow("ops"), verifier.Require, authn.RequireRole("reviewer")))
 	mux.HandleFunc("/", httpx.NotFound)
 
 	srv := &http.Server{
@@ -190,6 +204,19 @@ func main() {
 		logger.Info("transfer service listening", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server failed", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	// The internal port: the same routes, over mTLS. Only what comes in
+	// through it gets past mtls.Allow.
+	go func() {
+		lis, err := tls.Listen("tcp", cfg.InternalAddr, certs.Server())
+		if err == nil {
+			err = srv.Serve(lis)
+		}
+		if !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("internal server failed", "err", err)
 			os.Exit(1)
 		}
 	}()

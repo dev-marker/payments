@@ -6,8 +6,9 @@
 @bob = {{bobLogin.response.body.access_token}}
 @alicesWallet = {{aliceWallet.response.body.id}}
 @bobsWallet = {{bobWallet.response.body.id}}
-# The review API, on the transfer service itself: the gateway doesn't route it.
-@reviews = http://localhost:8083/internal/transfers
+# The review API is on the transfer service's internal port, 9083, over mTLS:
+# our ops tools call it with their certificate, for a reviewer who signed in.
+# REST Client can't show a certificate, so reviews are sent with curl.
 
 ### Alice signs up
 POST {{baseUrl}}/v1/auth/register
@@ -106,13 +107,13 @@ Authorization: Bearer {{alice}}
 POST {{baseUrl}}/internal/transfers/{{big.response.body.id}}/approve
 Content-Type: application/json
 
-{"reviewer": "dana@example.com", "note": "Called Alice: she's buying Bob's car."}
+{"note": "Called Alice: she's buying Bob's car."}
 
-### Approve it
-POST {{reviews}}/{{big.response.body.id}}/approve
+### Dana signs up: she reviews transfers
+POST {{baseUrl}}/v1/auth/register
 Content-Type: application/json
 
-{"reviewer": "dana@example.com", "note": "Called Alice: she's buying Bob's car."}
+{"email": "dana@example.com", "password": "{{password}}"}
 
 ### Alice pays Bob twelve hundred dollars
 # @name big2
@@ -122,12 +123,6 @@ Idempotency-Key: {{$guid}}
 Content-Type: application/json
 
 {"from": "{{alicesWallet}}", "to": "{{bobsWallet}}", "amount": 120000, "currency": "USD"}
-
-### Reject it
-POST {{reviews}}/{{big2.response.body.id}}/reject
-Content-Type: application/json
-
-{"reviewer": "dana@example.com", "note": "Alice didn't send it: someone has her password."}
 
 ### Where is the second one?
 GET {{baseUrl}}{{big2.response.headers.Location}}

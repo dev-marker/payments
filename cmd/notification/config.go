@@ -21,6 +21,7 @@ type Config struct {
 	NATSURL         string
 	AuthURL         string // the auth service, which knows email addresses
 	SMTPAddr        string // where email goes: Mailpit, in development
+	TLSDir          string // our certificate and key, and our CA's: for mTLS
 }
 
 // loadConfig reads the configuration. Everything has a sensible default except
@@ -35,8 +36,9 @@ func loadConfig(env *config.Env) (Config, error) {
 		DatabaseURL:     env.Required("NOTIFICATION_DATABASE_URL"),
 		DBMaxConns:      env.Int("NOTIFICATION_DB_MAX_CONNS", 10),
 		NATSURL:         env.String("NOTIFICATION_NATS_URL", "nats://localhost:4222"),
-		AuthURL:         env.String("NOTIFICATION_AUTH_URL", "http://localhost:8082"),
+		AuthURL:         env.String("NOTIFICATION_AUTH_URL", "https://localhost:9082"),
 		SMTPAddr:        env.String("NOTIFICATION_SMTP_ADDR", "localhost:1025"),
+		TLSDir:          env.String("NOTIFICATION_TLS_DIR", "secrets/tls/notification"),
 	}
 
 	// Text logs for humans in development, JSON for log collectors in production.

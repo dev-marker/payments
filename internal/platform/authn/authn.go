@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,10 +70,23 @@ func NewVerifier(key ed25519.PublicKey) *Verifier {
 	}
 }
 
-// Verify checks token's signature and claims, and returns the ID of the user
-// it was issued to. Any problem is an ErrInvalidToken, with the details.
-func (v *Verifier) Verify(token string) (uuid.UUID, error) {
-	var claims jwt.RegisteredClaims
+// Claims are what an access token says: the registered claims, and the
+// user's roles, when they have any.
+type Claims struct {
+	jwt.RegisteredClaims
+	Roles []string `json:"roles,omitempty"`
+}
+
+// A User is who an access token was issued to.
+type User struct {
+	ID    uuid.UUID
+	Roles []string // what they may do besides move their own money, like reviewer
+}
+
+// Verify checks token's signature and claims, and returns the user it was
+// issued to. Any problem is an ErrInvalidToken, with the details.
+func (v *Verifier) Verify(token string) (User, error) {
+	var claims Claims
 	_, err := v.parser.ParseWithClaims(token, &claims, func(t *jwt.Token) (any, error) {
 		if kid, _ := t.Header["kid"].(string); kid != v.keyID {
 			return nil, fmt.Errorf("unknown key ID %q", kid)
@@ -80,16 +94,16 @@ func (v *Verifier) Verify(token string) (uuid.UUID, error) {
 		return v.key, nil
 	})
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("%w: %w", ErrInvalidToken, err)
+		return User{}, fmt.Errorf("%w: %w", ErrInvalidToken, err)
 	}
 	id, err := uuid.Parse(claims.Subject)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("%w: subject %q is not a user ID", ErrInvalidToken, claims.Subject)
+		return User{}, fmt.Errorf("%w: subject %q is not a user ID", ErrInvalidToken, claims.Subject)
 	}
-	return id, nil
+	return User{ID: id, Roles: claims.Roles}, nil
 }
 
-type userIDKey struct{}
+type userKey struct{}
 
 // Require is middleware that only lets requests with a valid access token
 // through, sent as Authorization: Bearer <token>. Handlers behind it get the
@@ -102,7 +116,7 @@ func (v *Verifier) Require(next http.Handler) http.Handler {
 			httpx.Error(w, r, ErrMissingToken)
 			return
 		}
-		id, err := v.Verify(token)
+		user, err := v.Verify(token)
 		if err != nil {
 			// The client only learns that the token is no good. The log says why.
 			slog.InfoContext(r.Context(), "access token refused", "err", err)
@@ -110,8 +124,23 @@ func (v *Verifier) Require(next http.Handler) http.Handler {
 			httpx.Error(w, r, ErrInvalidToken)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), id)))
+		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), user)))
 	})
+}
+
+// RequireRole is middleware, behind Require, that only lets users with role
+// through. Anyone else gets a 403.
+func RequireRole(role string) httpx.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user, _ := r.Context().Value(userKey{}).(User)
+			if !slices.Contains(user.Roles, role) {
+				httpx.Error(w, r, fmt.Errorf("%w: only a %s may do this", apperr.ErrForbidden, role))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // bearer returns the token in an Authorization value, "Bearer <token>", or "".
@@ -123,18 +152,18 @@ func bearer(value string) string {
 	return token
 }
 
-// withUser returns a copy of ctx that carries the caller's ID, for UserID,
-// and for every line logged with it.
-func withUser(ctx context.Context, id uuid.UUID) context.Context {
-	ctx = context.WithValue(ctx, userIDKey{}, id)
-	return logging.With(ctx, slog.String("user_id", id.String()))
+// withUser returns a copy of ctx that carries the caller, for UserID and
+// RequireRole, and their ID for every line logged with it.
+func withUser(ctx context.Context, user User) context.Context {
+	ctx = context.WithValue(ctx, userKey{}, user)
+	return logging.With(ctx, slog.String("user_id", user.ID.String()))
 }
 
 // UserID returns the ID of the user who sent the request, as Require stored
 // it in ctx.
 func UserID(ctx context.Context) (uuid.UUID, bool) {
-	id, ok := ctx.Value(userIDKey{}).(uuid.UUID)
-	return id, ok
+	user, ok := ctx.Value(userKey{}).(User)
+	return user.ID, ok
 }
 
 // ReadPublicKey reads an Ed25519 public key from a PEM file, in the PKIX

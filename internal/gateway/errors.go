@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/fiston-user/payments/internal/platform/apperr"
@@ -32,6 +33,7 @@ var fromCode = map[codes.Code]struct {
 	codes.AlreadyExists:      {http.StatusConflict, "conflict"},
 	codes.Aborted:            {http.StatusConflict, "request_in_progress"},
 	codes.Unauthenticated:    {http.StatusUnauthorized, "unauthenticated"},
+	codes.PermissionDenied:   {http.StatusForbidden, "forbidden"},
 }
 
 // fromRPC turns a gRPC error into one httpx.Error sends with the right
@@ -45,7 +47,9 @@ func fromRPC(err error) error {
 	case codes.DeadlineExceeded:
 		return errUpstreamTimeout
 	case codes.Unavailable:
-		return fmt.Errorf("%w: %s", errUpstreamDown, s.Message())
+		// Its message names addresses, and TLS errors: for our logs only.
+		slog.Warn("wallet unavailable", "err", s.Message())
+		return errUpstreamDown
 	}
 	to, known := fromCode[s.Code()]
 	if !known {

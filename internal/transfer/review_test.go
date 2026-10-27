@@ -6,6 +6,7 @@ import (
 
 	"github.com/fiston-user/payments/internal/transfer"
 	"github.com/fiston-user/payments/internal/transfer/risk"
+	"github.com/google/uuid"
 )
 
 func TestDenied(t *testing.T) {
@@ -71,5 +72,31 @@ func TestReview(t *testing.T) {
 				t.Errorf("hold is %q, want %q", got, tt.hold)
 			}
 		})
+	}
+}
+
+// TestReviewAudited checks that a verdict leaves a row in the audit log: who
+// decided, what, and about which transfer.
+func TestReviewAudited(t *testing.T) {
+	t.Parallel()
+	s := newSaga(t)
+	s.risk.decision = risk.Review
+	tr := s.create(t)
+	if _, err := s.orch.RunOnce(t.Context()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	tr, err := s.store.Get(t.Context(), tr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verdict := transfer.Verdict{Approve: true, Reviewer: uuid.NewString(), Note: "called Alice"}
+	if _, err := s.store.Review(t.Context(), tr, verdict); err != nil {
+		t.Fatalf("review: %v", err)
+	}
+	var actor, action string
+	err = s.pool.QueryRow(t.Context(), "SELECT actor, action FROM audit_log WHERE target = $1",
+		tr.ID.String()).Scan(&actor, &action)
+	if err != nil || actor != verdict.Reviewer || action != "transfer.approve" {
+		t.Errorf("audit log: %q %q, %v; want %q transfer.approve", actor, action, err, verdict.Reviewer)
 	}
 }

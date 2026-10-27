@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"github.com/fiston-user/payments/internal/platform/idempotency"
 	"github.com/fiston-user/payments/internal/platform/jobs"
 	"github.com/fiston-user/payments/internal/platform/logging"
+	"github.com/fiston-user/payments/internal/platform/mtls"
 	"github.com/fiston-user/payments/internal/platform/natsx"
 	"github.com/fiston-user/payments/internal/platform/outbox"
 	"github.com/fiston-user/payments/internal/platform/postgres"
@@ -34,6 +36,7 @@ import (
 	"github.com/fiston-user/payments/internal/wallet/walletevents"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"google.golang.org/grpc/credentials"
 	grpchealth "google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
@@ -138,6 +141,12 @@ func main() {
 		os.Exit(1)
 	}
 	verifier := authn.NewVerifier(pub)
+	// Our certificate, and our CA's: for mTLS with our other services.
+	certs, err := mtls.Load(cfg.TLSDir)
+	if err != nil {
+		logger.Error("load certificates", "err", err)
+		os.Exit(1)
+	}
 
 	// The wallet is ready when its database is. NATS isn't checked: while it's
 	// down, events wait in the outbox, and payments carry on.
@@ -151,7 +160,7 @@ func main() {
 	// for everything else.
 	// Rates for currency conversion: built into the binary, for development.
 	// In production, a Provider that asks a bank, or a market data feed.
-	rates, err := fx.DevRates()
+	rates, err := fx.DevRates(cfg.Env)
 	if err != nil {
 		logger.Error("fx rates", "err", err)
 		os.Exit(1)
@@ -166,9 +175,11 @@ func main() {
 	handler.Register(api)
 	api.HandleFunc("/", httpx.NotFound)
 	mux.Handle("/v1/", verifier.Require(httpx.Routes(api)))
-	// Reports for finance: no user token, since users never reach them.
-	// Episode 21 puts mTLS in front.
-	handler.RegisterInternal(mux)
+	// Reports for finance, over mTLS: only our back office's tools may fetch them.
+	internal := http.NewServeMux()
+	handler.RegisterInternal(internal)
+	internal.HandleFunc("/", httpx.NotFound)
+	mux.Handle("/internal/", mtls.Allow("ops")(httpx.Routes(internal)))
 	mux.HandleFunc("/", httpx.NotFound)
 
 	// The same service, over gRPC, for our other services. Every RPC needs an
@@ -178,7 +189,15 @@ func main() {
 		healthpb.Health_ServiceDesc.ServiceName,
 		walletv1.HoldService_ServiceDesc.ServiceName,
 	}
-	grpcSrv := grpcx.NewServer(logger, verifier.UnaryInterceptor(noToken...))
+	grpcSrv := grpcx.NewServer(logger, credentials.NewTLS(certs.Server()),
+		// Who may call what, by their certificates. The gateway calls the
+		// wallet API for its users, and only sagas may hold money.
+		mtls.Authorize(map[string][]string{
+			walletv1.WalletService_ServiceDesc.ServiceName: {"gateway"},
+			walletv1.HoldService_ServiceDesc.ServiceName:   {"transfer"},
+			healthpb.Health_ServiceDesc.ServiceName:        {"gateway", "transfer"},
+		}),
+		verifier.UnaryInterceptor(noToken...))
 	walletv1.RegisterWalletServiceServer(grpcSrv, wallet.NewGRPCServer(svc, keys))
 	walletv1.RegisterHoldServiceServer(grpcSrv, wallet.NewHoldServer(svc))
 	healthSrv := grpchealth.NewServer()
@@ -230,6 +249,19 @@ func main() {
 		logger.Info("wallet service listening", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server failed", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	// The internal port: the same routes, over mTLS. Only what comes in
+	// through it gets past mtls.Allow.
+	go func() {
+		lis, err := tls.Listen("tcp", cfg.InternalAddr, certs.Server())
+		if err == nil {
+			err = srv.Serve(lis)
+		}
+		if !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("internal server failed", "err", err)
 			os.Exit(1)
 		}
 	}()

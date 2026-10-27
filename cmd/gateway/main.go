@@ -17,10 +17,12 @@ import (
 	"github.com/fiston-user/payments/internal/platform/config"
 	"github.com/fiston-user/payments/internal/platform/health"
 	"github.com/fiston-user/payments/internal/platform/logging"
+	"github.com/fiston-user/payments/internal/platform/mtls"
 	"github.com/fiston-user/payments/internal/platform/redis"
 	"github.com/fiston-user/payments/internal/platform/telemetry"
 	"github.com/fiston-user/payments/internal/wallet/walletclient"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"google.golang.org/grpc/credentials"
 )
 
 // version is stamped at build time: go build -ldflags "-X main.version=v1.2.3".
@@ -71,8 +73,15 @@ func main() {
 		logger.Error("connect to redis", "err", err)
 		os.Exit(1)
 	}
-	// One client for the whole process: every request shares its connection.
-	wallet, err := walletclient.New(cfg.WalletAddr, 5*time.Second)
+	// One client for the whole process: every request shares its connection,
+	// over mTLS. The wallet knows us by our certificate.
+	certs, err := mtls.Load(cfg.TLSDir)
+	if err != nil {
+		logger.Error("load certificates", "err", err)
+		os.Exit(1)
+	}
+	creds := credentials.NewTLS(certs.Client("wallet"))
+	wallet, err := walletclient.New(cfg.WalletAddr, creds, 5*time.Second)
 	if err != nil {
 		logger.Error("wallet client", "err", err)
 		os.Exit(1)

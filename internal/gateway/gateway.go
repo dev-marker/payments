@@ -87,9 +87,26 @@ func New(cfg Config) http.Handler {
 		httpx.RequestID,
 		httpx.AccessLog(cfg.Logger),
 		httpx.Recover(cfg.Logger),
+		secureHeaders,
 		cors(cfg.Origins),
 		limitBody(64<<10),
 	)
+}
+
+// secureHeaders asks browsers to be strict with our answers: never sniff JSON
+// into HTML, never frame it, run nothing in it, keep our URLs to ourselves,
+// and only ever talk to us over HTTPS.
+func secureHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		h.Set("Referrer-Policy", "no-referrer")
+		// Browsers only heed it over HTTPS, which our load balancer serves.
+		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // timeout gives each request a deadline, which its context carries upstream.

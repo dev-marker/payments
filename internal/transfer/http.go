@@ -115,27 +115,25 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) error {
 }
 
 // RegisterInternal adds the review API to mux, for our risk team's tools.
-// The gateway never routes /internal/: only our own network can reach it.
+// The gateway never routes /internal/: only our ops tools can reach it, with
+// their certificate, for a reviewer who signed in.
 func (h *Handler) RegisterInternal(mux *http.ServeMux) {
 	mux.Handle("POST /internal/transfers/{id}/approve", httpx.HandlerFunc(h.review(true)))
 	mux.Handle("POST /internal/transfers/{id}/reject", httpx.HandlerFunc(h.review(false)))
 }
 
 // review records a reviewer's verdict, and wakes the orchestrator to carry
-// it out: the capture, or the release.
+// it out: the capture, or the release. The reviewer is whoever signed in:
+// never a name in the body, which anyone could type.
 func (h *Handler) review(approve bool) httpx.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		var req struct {
-			Reviewer string `json:"reviewer"`
-			Note     string `json:"note"`
+			Note string `json:"note"`
 		}
 		if err := httpx.DecodeJSON(w, r, &req); err != nil {
 			return err
 		}
 		var v apperr.ValidationError
-		if req.Reviewer == "" {
-			v.Add("reviewer", "is required")
-		}
 		if req.Note == "" {
 			v.Add("note", "is required: say why")
 		}
@@ -150,7 +148,8 @@ func (h *Handler) review(approve bool) httpx.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		t, err = h.store.Review(r.Context(), t, Verdict{approve, req.Reviewer, req.Note})
+		reviewer, _ := authn.UserID(r.Context())
+		t, err = h.store.Review(r.Context(), t, Verdict{approve, reviewer.String(), req.Note})
 		if err != nil {
 			return err
 		}

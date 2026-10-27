@@ -26,6 +26,8 @@ type Config struct {
 	RedisURL        string        // the risk checks' velocity counters
 	ReviewTimeout   time.Duration // then a transfer in review is rejected
 	Risk            risk.Limits
+	TLSDir          string // our certificate and key, and our CA's: for mTLS
+	InternalAddr    string // the review API, over mTLS
 }
 
 // loadConfig reads the configuration. Everything has a sensible default except
@@ -54,6 +56,8 @@ func loadConfig(env *config.Env) (Config, error) {
 			FirstTimeAbove: int64(env.Int("TRANSFER_RISK_FIRST_TIME_ABOVE", 25_000)),
 			NewWalletAge:   env.Duration("TRANSFER_RISK_NEW_WALLET_AGE", 24*time.Hour),
 		},
+		TLSDir:       env.String("TRANSFER_TLS_DIR", "secrets/tls/transfer"),
+		InternalAddr: env.String("TRANSFER_INTERNAL_ADDR", ":9083"),
 	}
 
 	// Text logs for humans in development, JSON for log collectors in production.

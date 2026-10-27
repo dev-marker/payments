@@ -42,6 +42,8 @@ func classify(err error) (int, string) {
 		return http.StatusConflict, "conflict"
 	case errors.Is(err, apperr.ErrUnauthenticated):
 		return http.StatusUnauthorized, "unauthenticated"
+	case errors.Is(err, apperr.ErrForbidden):
+		return http.StatusForbidden, "forbidden"
 	default:
 		return http.StatusInternalServerError, "internal"
 	}

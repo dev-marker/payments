@@ -37,7 +37,9 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./deploy/postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U payments"]
+      # Over TCP: while its init scripts run, Postgres only listens on its
+      # socket, so a check through the socket says ready too early.
+      test: ["CMD-SHELL", "pg_isready -U payments -h 127.0.0.1"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -115,14 +117,15 @@ services:
     image: payments/wallet
     environment: &wallet-env
       <<: *env
-      WALLET_DATABASE_URL: postgres://payments:payments@postgres:5432/wallet?sslmode=disable
+      WALLET_DATABASE_URL: postgres://wallet_app:wallet_app@postgres:5432/wallet?sslmode=disable
       WALLET_REDIS_URL: redis://redis:6379/0
       WALLET_NATS_URL: nats://nats:4222
       WALLET_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
       # Every fifteen seconds here, to watch it work. By default: daily, at 02:00 UTC.
       WALLET_RECONCILE_EVERY: 15s
-    secrets: [auth_public_key]
-    ports: ["8081:8081"]
+      WALLET_TLS_DIR: /run/secrets/wallet_tls
+    secrets: [auth_public_key, wallet_tls]
+    ports: ["8081:8081", "9081:9081", "9091:9091"] # gRPC and internal: mTLS
     depends_on:
       wallet-migrate: {condition: service_completed_successfully}
       nats: {condition: service_healthy}
@@ -130,7 +133,10 @@ services:
   wallet-migrate:
     <<: *migrate
     image: payments/wallet
-    environment: *wallet-env
+    environment:
+      <<: *wallet-env
+      # The owner: the only role that can change the schema.
+      WALLET_DATABASE_URL: postgres://wallet_owner:wallet_owner@postgres:5432/wallet?sslmode=disable
 
   auth:
     <<: *service
@@ -138,9 +144,10 @@ services:
     image: payments/auth
     environment: &auth-env
       <<: *env
-      AUTH_DATABASE_URL: postgres://payments:payments@postgres:5432/auth?sslmode=disable
+      AUTH_DATABASE_URL: postgres://auth_app:auth_app@postgres:5432/auth?sslmode=disable
       AUTH_PRIVATE_KEY_FILE: /run/secrets/auth_private_key
-    secrets: [auth_private_key]
+      AUTH_TLS_DIR: /run/secrets/auth_tls
+    secrets: [auth_private_key, auth_tls]
     ports: ["8082:8082"]
     depends_on:
       auth-migrate: {condition: service_completed_successfully}
@@ -148,7 +155,9 @@ services:
   auth-migrate:
     <<: *migrate
     image: payments/auth
-    environment: *auth-env
+    environment:
+      <<: *auth-env
+      AUTH_DATABASE_URL: postgres://auth_owner:auth_owner@postgres:5432/auth?sslmode=disable
 
   transfer:
     <<: *service
@@ -156,13 +165,14 @@ services:
     image: payments/transfer
     environment: &transfer-env
       <<: *env
-      TRANSFER_DATABASE_URL: postgres://payments:payments@postgres:5432/transfer?sslmode=disable
+      TRANSFER_DATABASE_URL: postgres://transfer_app:transfer_app@postgres:5432/transfer?sslmode=disable
       TRANSFER_WALLET_ADDR: dns:///wallet:9081
       TRANSFER_NATS_URL: nats://nats:4222
       TRANSFER_REDIS_URL: redis://redis:6379/0
       TRANSFER_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
-    secrets: [auth_public_key]
-    ports: ["8083:8083"]
+      TRANSFER_TLS_DIR: /run/secrets/transfer_tls
+    secrets: [auth_public_key, transfer_tls]
+    ports: ["8083:8083", "9083:9083"]
     depends_on:
       transfer-migrate: {condition: service_completed_successfully}
       nats: {condition: service_healthy}
@@ -170,7 +180,9 @@ services:
   transfer-migrate:
     <<: *migrate
     image: payments/transfer
-    environment: *transfer-env
+    environment:
+      <<: *transfer-env
+      TRANSFER_DATABASE_URL: postgres://transfer_owner:transfer_owner@postgres:5432/transfer?sslmode=disable
 
   # It consumes the wallet's and the transfer service's streams, which they
   # create when they start: so it starts after them.
@@ -180,10 +192,12 @@ services:
     image: payments/notification
     environment: &notification-env
       <<: *env
-      NOTIFICATION_DATABASE_URL: postgres://payments:payments@postgres:5432/notification?sslmode=disable
+      NOTIFICATION_DATABASE_URL: postgres://notification_app:notification_app@postgres:5432/notification?sslmode=disable
       NOTIFICATION_NATS_URL: nats://nats:4222
-      NOTIFICATION_AUTH_URL: http://auth:8082
+      NOTIFICATION_AUTH_URL: https://auth:9082
       NOTIFICATION_SMTP_ADDR: mailpit:1025
+      NOTIFICATION_TLS_DIR: /run/secrets/notification_tls
+    secrets: [notification_tls]
     ports: ["8084:8084"]
     depends_on:
       notification-migrate: {condition: service_completed_successfully}
@@ -193,7 +207,9 @@ services:
   notification-migrate:
     <<: *migrate
     image: payments/notification
-    environment: *notification-env
+    environment:
+      <<: *notification-env
+      NOTIFICATION_DATABASE_URL: postgres://notification_owner:notification_owner@postgres:5432/notification?sslmode=disable
 
   # The only one that faces the internet. 9080 is its metrics and probes port.
   gateway:
@@ -210,7 +226,8 @@ services:
       GATEWAY_REDIS_URL: redis://redis:6379/0
       GATEWAY_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
       GATEWAY_IP_LIMIT: ${GATEWAY_IP_LIMIT:-20}
-    secrets: [auth_public_key]
+      GATEWAY_TLS_DIR: /run/secrets/gateway_tls
+    secrets: [auth_public_key, gateway_tls]
     ports: ["8080:8080", "9080:9080"]
 
   # Webhooks. It consumes the transfer service's stream, so it starts after it.
@@ -220,7 +237,7 @@ services:
     image: payments/webhook
     environment: &webhook-env
       <<: *env
-      WEBHOOK_DATABASE_URL: postgres://payments:payments@postgres:5432/webhook?sslmode=disable
+      WEBHOOK_DATABASE_URL: postgres://webhook_app:webhook_app@postgres:5432/webhook?sslmode=disable
       WEBHOOK_NATS_URL: nats://nats:4222
       WEBHOOK_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
       WEBHOOK_RETRY_SCHEDULE: ${WEBHOOK_RETRY_SCHEDULE:-} # empty: the real one
@@ -235,15 +252,28 @@ services:
   webhook-migrate:
     <<: *migrate
     image: payments/webhook
-    environment: *webhook-env
+    environment:
+      <<: *webhook-env
+      WEBHOOK_DATABASE_URL: postgres://webhook_owner:webhook_owner@postgres:5432/webhook?sslmode=disable
 
 volumes:
   pgdata:
 
 # Mounted as files under /run/secrets, never copied into an image. make keys
-# creates them.
+# and make certs create them.
 secrets:
   auth_private_key:
     file: secrets/auth_ed25519.pem
   auth_public_key:
     file: secrets/auth_ed25519.pub.pem
+  # A directory each, from make certs.
+  wallet_tls:
+    file: secrets/tls/wallet
+  auth_tls:
+    file: secrets/tls/auth
+  transfer_tls:
+    file: secrets/tls/transfer
+  notification_tls:
+    file: secrets/tls/notification
+  gateway_tls:
+    file: secrets/tls/gateway

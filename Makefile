@@ -127,3 +127,10 @@ keys:
 	@umask 077 && openssl genpkey -algorithm ed25519 -out secrets/auth_ed25519.pem
 	@openssl pkey -in secrets/auth_ed25519.pem -pubout -out secrets/auth_ed25519.pub.pem
 	@ls -l secrets
+
+# Certificates for mTLS between our services, from a new development CA: a
+# directory each, in secrets/tls, for a week. To renew them, run it again,
+# and restart the services.
+.PHONY: certs
+certs:
+	@go run ./cmd/devca -dir secrets/tls gateway wallet auth transfer notification ops

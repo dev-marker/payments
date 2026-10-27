@@ -34,9 +34,10 @@ func (s *Signer) PublicKey() ed25519.PublicKey {
 	return s.key.Public().(ed25519.PublicKey)
 }
 
-// Issue returns an access token for the user, issued at now. Taking the time
-// as an argument lets tests issue tokens that have already expired.
-func (s *Signer) Issue(userID uuid.UUID, now time.Time) (string, error) {
+// Issue returns an access token for the user, with their roles, issued at
+// now. Taking the time as an argument lets tests issue tokens that have
+// already expired.
+func (s *Signer) Issue(userID uuid.UUID, now time.Time, roles ...string) (string, error) {
 	claims := jwt.RegisteredClaims{
 		Issuer:    authn.Issuer,
 		Subject:   userID.String(),
@@ -45,7 +46,7 @@ func (s *Signer) Issue(userID uuid.UUID, now time.Time) (string, error) {
 		ExpiresAt: jwt.NewNumericDate(now.Add(s.ttl)),
 		ID:        uuid.NewString(), // unique per token, for logs and audits
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, authn.Claims{RegisteredClaims: claims, Roles: roles})
 	token.Header["kid"] = s.keyID
 	signed, err := token.SignedString(s.key)
 	if err != nil {

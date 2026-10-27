@@ -3,7 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -50,6 +50,8 @@ func proxyError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, context.Canceled):
 		// The client hung up: no one to answer.
 	default:
-		httpx.Error(w, r, fmt.Errorf("%w: %v", errUpstreamDown, err))
+		// The details, like an internal address, are for our logs only.
+		slog.WarnContext(r.Context(), "upstream unavailable", "err", err)
+		httpx.Error(w, r, errUpstreamDown)
 	}
 }

@@ -33,8 +33,12 @@ func (s Static) Rate(_ context.Context, from, to string) (Rate, error) {
 //go:embed devrates.json
 var devRates []byte
 
-// DevRates are the development rates, from devrates.json, built into the binary.
-func DevRates() (Static, error) {
+// DevRates are the development rates, from devrates.json, built into the
+// binary. They're made up: in production, env, they're an error.
+func DevRates(env string) (Static, error) {
+	if env == "production" {
+		return nil, errors.New("fx: the development rates can't price real money: configure a provider")
+	}
 	var s Static
 	if err := json.Unmarshal(devRates, &s); err != nil {
 		return nil, fmt.Errorf("devrates.json: %w", err)

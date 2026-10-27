@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fiston-user/payments/internal/platform/apperr"
+	"github.com/fiston-user/payments/internal/platform/audit"
 	"github.com/fiston-user/payments/internal/platform/events"
 	"github.com/fiston-user/payments/internal/platform/telemetry"
 	"github.com/fiston-user/payments/internal/transfer/risk"
@@ -98,7 +99,7 @@ func (s *Store) Advance(ctx context.Context, t Transfer, next State, step Step) 
 
 // advance is Advance, and runs extra too, if there is one, in the same transaction.
 func (s *Store) advance(
-	ctx context.Context, t Transfer, next State, step Step, extra func(*transferdb.Queries) error,
+	ctx context.Context, t Transfer, next State, step Step, extra func(pgx.Tx) error,
 ) (Transfer, error) {
 	if !t.State.CanBecome(next) {
 		return Transfer{}, fmt.Errorf("transfer %s: %s can't become %s", t.ID, t.State, next)
@@ -130,7 +131,7 @@ func (s *Store) advance(
 			return err
 		}
 		if extra != nil {
-			if err := extra(q); err != nil {
+			if err := extra(tx); err != nil {
 				return err
 			}
 		}
@@ -256,12 +257,24 @@ func (s *Store) Review(ctx context.Context, t Transfer, v Verdict) (Transfer, er
 		t.FailureReason = "review_rejected"
 	}
 	step := Step{"review", outcome, v.Note}
-	moved, err := s.advance(ctx, t, next, step, func(q *transferdb.Queries) error {
-		return q.InsertDecision(ctx, transferdb.InsertDecisionParams{
+	moved, err := s.advance(ctx, t, next, step, func(tx pgx.Tx) error {
+		err := s.q.WithTx(tx).InsertDecision(ctx, transferdb.InsertDecisionParams{
 			TransferID: t.ID,
 			Decision:   decision,
 			DecidedBy:  v.Reviewer,
 			Note:       v.Note,
+		})
+		if err != nil {
+			return err
+		}
+		// And in the audit log: who decided, and about how much money.
+		return audit.Record(ctx, tx, audit.Event{
+			Actor:  v.Reviewer,
+			Action: "transfer." + decision,
+			Target: t.ID.String(),
+			Details: map[string]any{
+				"note": v.Note, "amount": t.Amount, "currency": t.Currency, "user_id": t.UserID,
+			},
 		})
 	})
 	if errors.Is(err, ErrStale) {

@@ -130,8 +130,14 @@ func (s *Service) Login(ctx context.Context, email, password string) (Tokens, er
 func (s *Service) issue(
 	ctx context.Context, q *authdb.Queries, userID, family uuid.UUID, parent *uuid.UUID,
 ) (Tokens, error) {
+	// Roles are read every time: one that's taken away is gone from the next
+	// access token, fifteen minutes later at most.
+	u, err := q.GetUser(ctx, userID)
+	if err != nil {
+		return Tokens{}, fmt.Errorf("get user: %w", err)
+	}
 	now := time.Now()
-	access, err := s.signer.Issue(userID, now)
+	access, err := s.signer.Issue(userID, now, u.Roles...)
 	if err != nil {
 		return Tokens{}, err
 	}

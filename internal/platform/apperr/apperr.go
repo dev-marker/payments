@@ -19,6 +19,8 @@ var (
 	// ErrUnauthenticated means the caller didn't prove who they are: a wrong
 	// password, or a token that's missing, invalid, expired or revoked.
 	ErrUnauthenticated = errors.New("unauthenticated")
+	// ErrForbidden means we know who the caller is, and they may not do this.
+	ErrForbidden = errors.New("forbidden")
 )
 
 // ValidationError reports which fields of a request are invalid, and why.

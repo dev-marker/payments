@@ -42,6 +42,8 @@ func ToStatus(err error) *status.Status {
 		return status.New(codes.AlreadyExists, err.Error())
 	case errors.Is(err, apperr.ErrUnauthenticated):
 		return status.New(codes.Unauthenticated, err.Error())
+	case errors.Is(err, apperr.ErrForbidden):
+		return status.New(codes.PermissionDenied, err.Error())
 	case errors.Is(err, idempotency.ErrKeyReused):
 		return status.New(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, idempotency.ErrInProgress):

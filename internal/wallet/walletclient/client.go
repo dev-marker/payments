@@ -12,7 +12,7 @@ import (
 	"github.com/fiston-user/payments/internal/platform/grpcx"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 )
 
 // serviceConfig is how gRPC calls the wallet: spread over all its addresses,
@@ -60,12 +60,14 @@ type Client struct {
 }
 
 // New returns a Client for the wallet service at target, like
-// dns:///wallet:9081. Every call gets a deadline of at most timeout, or an
-// earlier one from its context. opts are added to ours, for tests.
-func New(target string, timeout time.Duration, opts ...grpc.DialOption) (*Client, error) {
+// dns:///wallet:9081, over a connection secured with creds: mTLS, or in
+// tests, insecure.NewCredentials(). Every call gets a deadline of at most
+// timeout, or an earlier one from its context. opts are added to ours, for tests.
+func New(
+	target string, creds credentials.TransportCredentials, timeout time.Duration, opts ...grpc.DialOption,
+) (*Client, error) {
 	opts = append([]grpc.DialOption{
-		// Plain text inside our network, for now. Episode 21 adds mTLS.
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithDefaultServiceConfig(serviceConfig),
 		grpc.WithChainUnaryInterceptor(grpcx.PropagateRequestID, deadline(timeout)),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()), // a span per call, and the context

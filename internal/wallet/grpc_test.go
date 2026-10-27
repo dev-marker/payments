@@ -44,7 +44,7 @@ func newGRPC(t *testing.T) grpcEnv {
 
 	// The real server, with every interceptor, on a bufconn listener: an
 	// in-memory network, so no ports and no flaky timing.
-	srv := grpcx.NewServer(slog.New(slog.DiscardHandler),
+	srv := grpcx.NewServer(slog.New(slog.DiscardHandler), insecure.NewCredentials(),
 		authn.NewVerifier(pub).UnaryInterceptor(healthpb.Health_ServiceDesc.ServiceName))
 	walletv1.RegisterWalletServiceServer(srv, wallet.NewGRPCServer(svc, idempotency.NewStore(pool, nil)))
 	healthpb.RegisterHealthServer(srv, health.NewServer())
@@ -56,7 +56,7 @@ func newGRPC(t *testing.T) grpcEnv {
 	dial := grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 		return lis.DialContext(ctx)
 	})
-	client, err := walletclient.New("passthrough:///bufconn", 5*time.Second, dial)
+	client, err := walletclient.New("passthrough:///bufconn", insecure.NewCredentials(), 5*time.Second, dial)
 	if err != nil {
 		t.Fatalf("client: %v", err)
 	}

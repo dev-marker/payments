@@ -18,6 +18,7 @@ import (
 	"github.com/fiston-user/payments/internal/platform/health"
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/logging"
+	"github.com/fiston-user/payments/internal/platform/mtls"
 	"github.com/fiston-user/payments/internal/platform/natsx"
 	"github.com/fiston-user/payments/internal/platform/postgres"
 	"github.com/fiston-user/payments/internal/platform/telemetry"
@@ -88,12 +89,18 @@ func main() {
 	logger.Info("connected to postgres", "max_conns", pool.Config().MaxConns)
 
 	// Email goes out through SMTP, to the addresses the auth service knows,
-	// cached for a minute.
+	// cached for a minute. We ask over mTLS: auth knows us by our certificate.
+	certs, err := mtls.Load(cfg.TLSDir)
+	if err != nil {
+		logger.Error("load certificates", "err", err)
+		os.Exit(1)
+	}
+	toAuth := &http.Transport{TLSClientConfig: certs.Client("auth")}
 	notifier := notification.NewNotifier(
 		notification.NewStore(pool),
 		notification.NewCachedUsers(notification.AuthUsers{BaseURL: cfg.AuthURL, Client: &http.Client{
 			Timeout:   5 * time.Second,
-			Transport: otelhttp.NewTransport(http.DefaultTransport), // a span, and the context
+			Transport: otelhttp.NewTransport(toAuth), // a span, and the context
 		}}, time.Minute),
 		notification.SMTP{Addr: cfg.SMTPAddr, From: "no-reply@payments.example"},
 		logger,

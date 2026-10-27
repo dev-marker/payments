@@ -79,7 +79,7 @@ func TestAccessToken(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := verifier.Verify(tt.token)
 			switch {
-			case tt.ok && (err != nil || got != user):
+			case tt.ok && (err != nil || got.ID != user):
 				t.Errorf("Verify = %s, %v; want %s", got, err, user)
 			case !tt.ok && !errors.Is(err, authn.ErrInvalidToken):
 				t.Errorf("Verify = %s, %v; want ErrInvalidToken", got, err)

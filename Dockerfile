@@ -2,7 +2,7 @@
 # One Dockerfile for all five services: docker build --build-arg SERVICE=wallet .
 
 # Stage 1 builds, with the whole Go toolchain. None of it ships.
-FROM golang:1.26.5-alpine AS build
+FROM golang:1.26.11-alpine AS build
 WORKDIR /src
 
 # Modules first, in a step of their own: it runs again only when go.mod or

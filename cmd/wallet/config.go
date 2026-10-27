@@ -27,6 +27,8 @@ type Config struct {
 	FXFeeBps        int           // our fee on conversions, in basis points
 	ReconcileEvery  time.Duration // how often the ledger is reconciled
 	ReconcileAt     time.Duration // how far into each period: 2h, with 24h, is 02:00 UTC
+	TLSDir          string        // our certificate and key, and our CA's: for mTLS
+	InternalAddr    string        // the internal routes, over mTLS
 }
 
 // loadConfig reads the configuration. Everything has a sensible default except
@@ -49,6 +51,8 @@ func loadConfig(env *config.Env) (Config, error) {
 		FXFeeBps:        env.Int("WALLET_FX_FEE_BPS", 50),
 		ReconcileEvery:  env.Duration("WALLET_RECONCILE_EVERY", 24*time.Hour),
 		ReconcileAt:     env.Duration("WALLET_RECONCILE_AT", 2*time.Hour),
+		TLSDir:          env.String("WALLET_TLS_DIR", "secrets/tls/wallet"),
+		InternalAddr:    env.String("WALLET_INTERNAL_ADDR", ":9091"),
 	}
 
 	// Text logs for humans in development, JSON for log collectors in production.

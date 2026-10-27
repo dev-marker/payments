@@ -56,7 +56,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /v1/auth/refresh", httpx.HandlerFunc(h.refresh))
 	mux.Handle("POST /v1/auth/logout", httpx.HandlerFunc(h.logout))
 	mux.Handle("GET /v1/auth/me", h.verifier.Require(httpx.HandlerFunc(h.me)))
-	// For our own services: the gateway never routes /internal/ to us.
+}
+
+// RegisterInternal adds the routes for our own services to mux. The gateway
+// never routes /internal/ to us.
+func (h *Handler) RegisterInternal(mux *http.ServeMux) {
 	mux.Handle("GET /internal/users/{id}", httpx.HandlerFunc(h.user))
 }
 
@@ -124,7 +128,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) error {
 }
 
 // user returns any user, by ID, for services like notification that only
-// know IDs. Until episode 21's mTLS, the network is what keeps users out.
+// know IDs.
 func (h *Handler) user(w http.ResponseWriter, r *http.Request) error {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {

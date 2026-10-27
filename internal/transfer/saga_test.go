@@ -13,6 +13,7 @@ import (
 	"github.com/fiston-user/payments/internal/transfer"
 	"github.com/fiston-user/payments/internal/transfer/risk"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -70,6 +71,7 @@ type sagaTest struct {
 	store  *transfer.Store
 	wallet *fakeWallet
 	risk   *fakeRisk
+	pool   *pgxpool.Pool
 }
 
 // newSaga gives a test its own tables, like the relay's test: temporary
@@ -84,7 +86,7 @@ func newSaga(t *testing.T) sagaTest {
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	for _, table := range []string{"transfers", "transfer_steps", "outbox", "risk_decisions"} {
+	for _, table := range []string{"transfers", "transfer_steps", "outbox", "risk_decisions", "audit_log"} {
 		sql := fmt.Sprintf(`CREATE TEMPORARY TABLE %s (LIKE public.%[1]s INCLUDING ALL)`, table)
 		if _, err := pool.Exec(t.Context(), sql); err != nil {
 			t.Fatalf("create %s: %v", table, err)
@@ -95,7 +97,7 @@ func newSaga(t *testing.T) sagaTest {
 	screener := &fakeRisk{}
 	orch := transfer.NewOrchestrator(store, wallet, screener, slog.New(slog.DiscardHandler))
 	orch.Backoff = time.Millisecond
-	return sagaTest{orch, store, wallet, screener}
+	return sagaTest{orch, store, wallet, screener, pool}
 }
 
 // create stores a pending transfer of $15.

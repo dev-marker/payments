@@ -8,10 +8,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/fiston-user/payments/db"
+	pg "github.com/fiston-user/payments/internal/platform/postgres"
 	"github.com/testcontainers/testcontainers-go"
 	tclog "github.com/testcontainers/testcontainers-go/log"
 	"github.com/testcontainers/testcontainers-go/modules/nats"
@@ -66,31 +69,34 @@ func (k *Kit) keep(c testcontainers.Container, err error) bool {
 	return err == nil
 }
 
-// Postgres starts Postgres with a database for service, with all of its
-// migrations applied, and returns its URL.
+// Postgres starts Postgres the way Compose does, with every service's roles
+// and database, applies service's migrations as its owner, and returns the
+// superuser's URL for service's database.
 func (k *Kit) Postgres(service string) string {
 	if k.err != nil {
 		return ""
 	}
-	dir := filepath.Join(moduleRoot(), "db", service, "migrations")
-	migrations, _ := filepath.Glob(filepath.Join(dir, "*.up.sql")) // sorted: oldest first
-	if len(migrations) == 0 {
-		k.err = fmt.Errorf("no migrations in %s", dir)
-		return ""
-	}
+	scripts, _ := filepath.Glob(filepath.Join(moduleRoot(), "deploy", "postgres", "*.sql")) // sorted
 	c, err := postgres.Run(k.ctx, postgresImage,
-		postgres.WithDatabase(service),
 		postgres.WithUsername("payments"),
 		postgres.WithPassword("payments"),
-		postgres.WithOrderedInitScripts(migrations...),
+		postgres.WithOrderedInitScripts(scripts...),
 		postgres.BasicWaitStrategies(),
 	)
 	if !k.keep(c, err) {
 		return ""
 	}
-	url, err := c.ConnectionString(k.ctx, "sslmode=disable")
-	k.err = err
-	return url
+	dsn, err := c.ConnectionString(k.ctx, "sslmode=disable")
+	if err != nil {
+		k.err = err
+		return ""
+	}
+	u, _ := url.Parse(dsn)
+	u.Path = "/" + service
+	owner := *u
+	owner.User = url.UserPassword(service+"_owner", service+"_owner")
+	_, k.err = pg.Migrate(owner.String(), db.Migrations(service))
+	return u.String()
 }
 
 // NATS starts a NATS server with JetStream, and returns its URL.

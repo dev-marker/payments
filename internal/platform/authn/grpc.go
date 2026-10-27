@@ -26,12 +26,12 @@ func (v *Verifier) UnaryInterceptor(public ...string) grpc.UnaryServerIntercepto
 		if len(values) != 1 || bearer(values[0]) == "" {
 			return nil, ErrMissingToken
 		}
-		id, err := v.Verify(bearer(values[0]))
+		user, err := v.Verify(bearer(values[0]))
 		if err != nil {
 			slog.InfoContext(ctx, "access token refused", "err", err)
 			return nil, ErrInvalidToken
 		}
-		return handler(withUser(ctx, id), req)
+		return handler(withUser(ctx, user), req)
 	}
 }
 

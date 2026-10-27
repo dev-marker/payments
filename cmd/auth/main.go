@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/fiston-user/payments/internal/platform/health"
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/logging"
+	"github.com/fiston-user/payments/internal/platform/mtls"
 	"github.com/fiston-user/payments/internal/platform/postgres"
 	"github.com/fiston-user/payments/internal/platform/telemetry"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -90,6 +92,12 @@ func main() {
 	}
 	signer := auth.NewSigner(key, cfg.AccessTTL)
 	logger.Info("signing key loaded", "kid", authn.KeyID(signer.PublicKey()))
+	// Our certificate, and our CA's: for mTLS with our other services.
+	certs, err := mtls.Load(cfg.TLSDir)
+	if err != nil {
+		logger.Error("load certificates", "err", err)
+		os.Exit(1)
+	}
 
 	probes := health.New(logger, map[string]health.Check{"postgres": pool.Ping})
 	mux := http.NewServeMux()
@@ -99,7 +107,13 @@ func main() {
 
 	// The auth API, and a JSON 404 for everything else.
 	svc := auth.NewService(pool, signer, cfg.RefreshTTL)
-	auth.NewHandler(svc, authn.NewVerifier(signer.PublicKey())).Register(mux)
+	handler := auth.NewHandler(svc, authn.NewVerifier(signer.PublicKey()))
+	handler.Register(mux)
+	// Users' email addresses, over mTLS: only the notification service may ask.
+	internal := http.NewServeMux()
+	handler.RegisterInternal(internal)
+	internal.HandleFunc("/", httpx.NotFound)
+	mux.Handle("/internal/", mtls.Allow("notification")(httpx.Routes(internal)))
 	mux.HandleFunc("/", httpx.NotFound)
 
 	srv := &http.Server{
@@ -121,6 +135,19 @@ func main() {
 		logger.Info("auth service listening", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server failed", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	// The internal port: the same routes, over mTLS. Only what comes in
+	// through it gets past mtls.Allow.
+	go func() {
+		lis, err := tls.Listen("tcp", cfg.InternalAddr, certs.Server())
+		if err == nil {
+			err = srv.Serve(lis)
+		}
+		if !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("internal server failed", "err", err)
 			os.Exit(1)
 		}
 	}()

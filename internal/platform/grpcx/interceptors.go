@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -20,14 +21,19 @@ const requestIDKey = "x-request-id"
 
 // NewServer returns a gRPC server with our interceptors, outermost first:
 // request IDs, logging, panic recovery, error mapping, and then the service's
-// own, like authentication.
-func NewServer(logger *slog.Logger, interceptors ...grpc.UnaryServerInterceptor) *grpc.Server {
+// own, like authentication. creds secure its connections: mTLS, or in tests,
+// insecure.NewCredentials().
+func NewServer(
+	logger *slog.Logger, creds credentials.TransportCredentials,
+	interceptors ...grpc.UnaryServerInterceptor,
+) *grpc.Server {
 	chain := append([]grpc.UnaryServerInterceptor{
 		RequestID, Log(logger), Recover(logger), Errors,
 	}, interceptors...)
 	// The stats handler traces every RPC, and runs before any interceptor, so
 	// they all see the span.
 	return grpc.NewServer(
+		grpc.Creds(creds),
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.ChainUnaryInterceptor(chain...),
 	)
