@@ -57,6 +57,18 @@ loadtest:
 		-e BASE_URL=http://host.docker.internal:8080 \
 		grafana/k6:2.4.0 run /loadtest/transfers.js
 
+# The whole system, from images, set up for a load test: k6 signs up fifty
+# users from one address, and each sends far more than the five transfers in
+# ten minutes that our velocity limit allows.
+.PHONY: loadtest-up sagas
+loadtest-up:
+	@GATEWAY_IP_LIMIT=1000 TRANSFER_RISK_MAX_COUNT=1000 docker compose --profile app up -d --build --wait
+
+# How long the last load test's sagas took: what people waiting for their
+# money feel, after the 202.
+sagas:
+	@docker compose exec -T postgres psql -U payments -d transfer < loadtest/sagas.sql
+
 .PHONY: run-wallet run-auth run-transfer run-notification dead-letters replay-dead-letters run-gateway keys reconciliation
 
 # Run the wallet service against the local database, stamped with a git version.
@@ -105,6 +117,14 @@ reconciliation:
 		"SELECT d.* FROM job_runs, jsonb_to_recordset(summary->'discrepancies') \
 		AS d(\"check\" text, ref text, currency text, expected bigint, actual bigint) \
 		WHERE id = (SELECT max(id) FROM job_runs WHERE job = 'reconcile' AND status = 'succeeded')"
+
+# The slowest queries on average, in every database, since Postgres started:
+# SELECT pg_stat_statements_reset() starts the count again.
+.PHONY: slow-queries
+slow-queries:
+	@docker compose exec -T postgres psql -U payments -c "SELECT calls, round(mean_exec_time) AS mean_ms, \
+		left(regexp_replace(query, '\s+', ' ', 'g'), 80) AS query FROM pg_stat_statements \
+		ORDER BY mean_exec_time DESC LIMIT 8"
 
 # The public API on port 8080, in front of the others.
 run-gateway:

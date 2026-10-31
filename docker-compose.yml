@@ -27,6 +27,9 @@ services:
   postgres:
     image: postgres:17-alpine
     container_name: payments-postgres
+    # pg_stat_statements keeps statistics on every query: how often it ran,
+    # and how long it took. It has to be loaded when Postgres starts.
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
     environment:
       POSTGRES_USER: payments
       POSTGRES_PASSWORD: payments
@@ -171,6 +174,7 @@ services:
       TRANSFER_REDIS_URL: redis://redis:6379/0
       TRANSFER_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
       TRANSFER_TLS_DIR: /run/secrets/transfer_tls
+      TRANSFER_RISK_MAX_COUNT: ${TRANSFER_RISK_MAX_COUNT:-5} # load tests need more: make loadtest-up
     secrets: [auth_public_key, transfer_tls]
     ports: ["8083:8083", "9083:9083"]
     depends_on:
@@ -228,7 +232,7 @@ services:
       GATEWAY_IP_LIMIT: ${GATEWAY_IP_LIMIT:-20}
       GATEWAY_TLS_DIR: /run/secrets/gateway_tls
     secrets: [auth_public_key, gateway_tls]
-    ports: ["8080:8080", "9080:9080"]
+    ports: ["8080:8080", "9080:9080", "9088:9088"] # 9088: internal, mTLS
 
   # Webhooks. It consumes the transfer service's stream, so it starts after it.
   webhook:

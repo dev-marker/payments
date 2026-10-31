@@ -25,15 +25,17 @@ JOIN accounts a ON a.id = e.account_id
 WHERE e.account_id = @account_id AND e.created_at < @before;
 
 -- name: StatementPage :many
--- A page of an account's entries posted in [since, until), oldest first, after
--- the entry after_id: keyset pagination, as fast for the last page as the first.
+-- A page of an account's entries posted before until, oldest first, after the
+-- entry at (after_at, after_id): keyset pagination, in the order of the index
+-- on (account_id, created_at, id), as fast for the last page as the first.
+-- The first page starts after (since, 0).
 SELECT e.id, e.created_at, e.transaction_id, t.description, e.direction, e.amount
 FROM entries e
 JOIN transactions t ON t.id = e.transaction_id
 WHERE e.account_id = @account_id
-  AND e.created_at >= @since AND e.created_at < @until
-  AND e.id > @after_id
-ORDER BY e.id
+  AND (e.created_at, e.id) > (@after_at::timestamptz, @after_id::bigint)
+  AND e.created_at < @until
+ORDER BY e.created_at, e.id
 LIMIT @page_size;
 
 -- name: TrialBalance :many

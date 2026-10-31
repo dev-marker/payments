@@ -18,6 +18,7 @@ import (
 	"github.com/fiston-user/payments/internal/fx"
 	"github.com/fiston-user/payments/internal/platform/authn"
 	"github.com/fiston-user/payments/internal/platform/config"
+	"github.com/fiston-user/payments/internal/platform/debug"
 	"github.com/fiston-user/payments/internal/platform/health"
 	"github.com/fiston-user/payments/internal/platform/httpx"
 	"github.com/fiston-user/payments/internal/platform/logging"
@@ -94,6 +95,7 @@ func main() {
 	}
 	logger.Info("connected to postgres", "max_conns", pool.Config().MaxConns)
 	outbox.RegisterMetrics(pool)
+	postgres.RegisterMetrics("main", pool)
 
 	// NATS, for events. Like Postgres, it must be there when we start.
 	nc, err := natsx.Connect(cfg.NATSURL, "transfer", logger)
@@ -175,6 +177,8 @@ func main() {
 	internal.HandleFunc("/", httpx.NotFound)
 	mux.Handle("/internal/", httpx.Chain(httpx.Routes(internal),
 		mtls.Allow("ops"), verifier.Require, authn.RequireRole("reviewer")))
+	// Go's profiler, for our ops tools: their certificate, and no reviewer.
+	mux.Handle("/internal/debug/", mtls.Allow("ops")(debug.Handler()))
 	mux.HandleFunc("/", httpx.NotFound)
 
 	srv := &http.Server{

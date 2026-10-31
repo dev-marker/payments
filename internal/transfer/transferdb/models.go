@@ -12,6 +12,18 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 )
 
+type AuditLog struct {
+	ID        int64
+	At        time.Time
+	Actor     string
+	Action    string
+	Target    string
+	Details   []byte
+	Client    string
+	RequestID string
+	TraceID   string
+}
+
 type Outbox struct {
 	Seq          int64
 	EventID      uuid.UUID

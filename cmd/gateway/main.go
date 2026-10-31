@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/fiston-user/payments/internal/gateway"
 	"github.com/fiston-user/payments/internal/platform/authn"
 	"github.com/fiston-user/payments/internal/platform/config"
+	"github.com/fiston-user/payments/internal/platform/debug"
 	"github.com/fiston-user/payments/internal/platform/health"
 	"github.com/fiston-user/payments/internal/platform/logging"
 	"github.com/fiston-user/payments/internal/platform/mtls"
@@ -120,11 +122,24 @@ func main() {
 	probes := health.New(logger, nil)
 	ops := http.NewServeMux()
 	ops.Handle("GET /metrics", promhttp.Handler())
+	ops.Handle("/internal/debug/", mtls.Allow("ops")(debug.Handler()))
 	probes.Register(ops)
 	metrics := &http.Server{Addr: cfg.MetricsAddr, Handler: ops, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := metrics.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("metrics server failed", "err", err)
+			os.Exit(1)
+		}
+	}()
+	// The same mux over mTLS, on the internal port: the only way to the
+	// profiler, which mtls.Allow keeps for our ops tools.
+	go func() {
+		lis, err := tls.Listen("tcp", cfg.InternalAddr, certs.Server())
+		if err == nil {
+			err = metrics.Serve(lis)
+		}
+		if !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("internal server failed", "err", err)
 			os.Exit(1)
 		}
 	}()

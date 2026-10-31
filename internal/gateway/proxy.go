@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/fiston-user/payments/internal/platform/httpx"
@@ -39,8 +40,20 @@ func newProxy(target *url.URL) *httputil.ReverseProxy {
 			return nil
 		},
 		ErrorHandler: proxyError,
+		BufferPool:   buffers,
 	}
 }
+
+// buffers lends every proxy a 32 KB buffer to copy a response with, and takes
+// it back afterwards. Without one, each response gets a buffer of its own.
+var buffers = &bufferPool{sync.Pool{New: func() any { b := make([]byte, 32<<10); return &b }}}
+
+// bufferPool is a sync.Pool, as an httputil.BufferPool. It keeps pointers to
+// slices: putting a slice itself in a sync.Pool allocates, every time.
+type bufferPool struct{ pool sync.Pool }
+
+func (p *bufferPool) Get() []byte  { return *p.pool.Get().(*[]byte) }
+func (p *bufferPool) Put(b []byte) { p.pool.Put(&b) }
 
 // proxyError answers in our JSON format when the service can't.
 func proxyError(w http.ResponseWriter, r *http.Request, err error) {

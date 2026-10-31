@@ -61,7 +61,7 @@ func (s *Store) Statement(
 ) iter.Seq2[StatementLine, error] {
 	return func(yield func(StatementLine, error) bool) {
 		fail := func(err error) { yield(StatementLine{}, fmt.Errorf("statement: %w", err)) }
-		tx, err := s.pool.BeginTx(ctx, snapshot)
+		tx, err := s.reports.BeginTx(ctx, snapshot)
 		if err != nil {
 			fail(err)
 			return
@@ -74,7 +74,7 @@ func (s *Store) Statement(
 			return
 		}
 		page := walletdb.StatementPageParams{
-			AccountID: acc.ID, Since: since, Until: until, PageSize: statementPage,
+			AccountID: acc.ID, AfterAt: since, Until: until, PageSize: statementPage,
 		}
 		for {
 			entries, err := q.StatementPage(ctx, page)
@@ -93,7 +93,7 @@ func (s *Store) Statement(
 				if !yield(line, nil) {
 					return // the caller stopped
 				}
-				page.AfterID = e.ID // the next page starts after this entry
+				page.AfterAt, page.AfterID = e.CreatedAt, e.ID // the next page starts after this entry
 			}
 			if len(entries) < statementPage {
 				return
@@ -117,7 +117,7 @@ func (s *Service) Statement(ctx context.Context, id uuid.UUID, first, last time.
 // TrialBalance returns every ledger account's debits and credits before a
 // moment, with a total per currency.
 func (s *Store) TrialBalance(ctx context.Context, before time.Time) ([]walletdb.TrialBalanceRow, error) {
-	lines, err := s.q.TrialBalance(ctx, before)
+	lines, err := walletdb.New(s.reports).TrialBalance(ctx, before)
 	if err != nil {
 		return nil, fmt.Errorf("trial balance: %w", err)
 	}

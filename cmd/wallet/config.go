@@ -19,6 +19,7 @@ type Config struct {
 	LogFormat       string
 	DatabaseURL     string
 	DBMaxConns      int
+	DBReportConns   int // a pool of their own for reports: statements, trial balances
 	RedisURL        string
 	PublicKeyFile   string
 	NATSURL         string
@@ -43,6 +44,7 @@ func loadConfig(env *config.Env) (Config, error) {
 		LogLevel:        config.Parse(env, "LOG_LEVEL", slog.LevelInfo, logging.ParseLevel),
 		DatabaseURL:     env.Required("WALLET_DATABASE_URL"),
 		DBMaxConns:      env.Int("WALLET_DB_MAX_CONNS", 10),
+		DBReportConns:   env.Int("WALLET_DB_REPORT_CONNS", 2),
 		RedisURL:        env.String("WALLET_REDIS_URL", "redis://localhost:6379/0"),
 		PublicKeyFile:   env.Required("WALLET_AUTH_PUBLIC_KEY_FILE"),
 		NATSURL:         env.String("WALLET_NATS_URL", "nats://localhost:4222"),
@@ -64,6 +66,9 @@ func loadConfig(env *config.Env) (Config, error) {
 
 	if c.DBMaxConns < 1 || c.DBMaxConns > 100 {
 		env.Invalid("WALLET_DB_MAX_CONNS", "must be between 1 and 100")
+	}
+	if c.DBReportConns < 1 || c.DBReportConns > c.DBMaxConns {
+		env.Invalid("WALLET_DB_REPORT_CONNS", "must be between 1 and WALLET_DB_MAX_CONNS")
 	}
 	if c.NATSReplicas < 1 || c.NATSReplicas > 5 {
 		env.Invalid("WALLET_NATS_REPLICAS", "must be between 1 and 5")

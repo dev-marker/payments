@@ -30,6 +30,7 @@ type Config struct {
 	WebhookURL      *url.URL
 	WalletURL       *url.URL // the wallet's REST API, next to its gRPC one
 	TLSDir          string   // our certificate and key, and our CA's: for mTLS
+	InternalAddr    string   // the profiler, over mTLS
 }
 
 // loadConfig reads the configuration. Everything has a sensible default except
@@ -56,7 +57,8 @@ func loadConfig(env *config.Env) (Config, error) {
 			&url.URL{Scheme: "http", Host: "localhost:8085"}, url.Parse),
 		WalletURL: config.Parse(env, "GATEWAY_WALLET_URL",
 			&url.URL{Scheme: "http", Host: "localhost:8081"}, url.Parse),
-		TLSDir: env.String("GATEWAY_TLS_DIR", "secrets/tls/gateway"),
+		TLSDir:       env.String("GATEWAY_TLS_DIR", "secrets/tls/gateway"),
+		InternalAddr: env.String("GATEWAY_INTERNAL_ADDR", ":9088"),
 	}
 
 	// Text logs for humans in development, JSON for log collectors in production.

@@ -129,17 +129,17 @@ SELECT e.id, e.created_at, e.transaction_id, t.description, e.direction, e.amoun
 FROM entries e
 JOIN transactions t ON t.id = e.transaction_id
 WHERE e.account_id = $1
-  AND e.created_at >= $2 AND e.created_at < $3
-  AND e.id > $4
-ORDER BY e.id
+  AND (e.created_at, e.id) > ($2::timestamptz, $3::bigint)
+  AND e.created_at < $4
+ORDER BY e.created_at, e.id
 LIMIT $5
 `
 
 type StatementPageParams struct {
 	AccountID uuid.UUID `json:"account_id"`
-	Since     time.Time `json:"since"`
-	Until     time.Time `json:"until"`
+	AfterAt   time.Time `json:"after_at"`
 	AfterID   int64     `json:"after_id"`
+	Until     time.Time `json:"until"`
 	PageSize  int32     `json:"page_size"`
 }
 
@@ -152,14 +152,16 @@ type StatementPageRow struct {
 	Amount        int64          `json:"amount"`
 }
 
-// A page of an account's entries posted in [since, until), oldest first, after
-// the entry after_id: keyset pagination, as fast for the last page as the first.
+// A page of an account's entries posted before until, oldest first, after the
+// entry at (after_at, after_id): keyset pagination, in the order of the index
+// on (account_id, created_at, id), as fast for the last page as the first.
+// The first page starts after (since, 0).
 func (q *Queries) StatementPage(ctx context.Context, arg StatementPageParams) ([]StatementPageRow, error) {
 	rows, err := q.db.Query(ctx, statementPage,
 		arg.AccountID,
-		arg.Since,
-		arg.Until,
+		arg.AfterAt,
 		arg.AfterID,
+		arg.Until,
 		arg.PageSize,
 	)
 	if err != nil {

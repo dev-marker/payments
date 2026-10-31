@@ -67,7 +67,7 @@ func (s *Store) Reconcile(ctx context.Context) (Reconciliation, error) {
 	tx := s.tx
 	if tx == nil {
 		var err error
-		if tx, err = s.pool.BeginTx(ctx, snapshot); err != nil {
+		if tx, err = s.reports.BeginTx(ctx, snapshot); err != nil {
 			return Reconciliation{}, fmt.Errorf("reconcile: %w", err)
 		}
 		defer tx.Rollback(ctx)

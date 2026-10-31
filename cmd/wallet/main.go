@@ -20,6 +20,7 @@ import (
 	"github.com/fiston-user/payments/internal/fx"
 	"github.com/fiston-user/payments/internal/platform/authn"
 	"github.com/fiston-user/payments/internal/platform/config"
+	"github.com/fiston-user/payments/internal/platform/debug"
 	"github.com/fiston-user/payments/internal/platform/grpcx"
 	"github.com/fiston-user/payments/internal/platform/health"
 	"github.com/fiston-user/payments/internal/platform/httpx"
@@ -100,6 +101,15 @@ func main() {
 	}
 	logger.Info("connected to postgres", "max_conns", pool.Config().MaxConns)
 	outbox.RegisterMetrics(pool)
+	postgres.RegisterMetrics("main", pool)
+	// Reports get a pool of their own, a bulkhead: at the end of the month,
+	// finance can't take the connections that payments need.
+	reports, err := postgres.NewPool(context.Background(), cfg.DatabaseURL, int32(cfg.DBReportConns))
+	if err != nil {
+		logger.Error("connect to postgres", "err", err)
+		os.Exit(1)
+	}
+	postgres.RegisterMetrics("reports", reports)
 	wallet.RegisterMetrics(pool)
 
 	// Redis is only a cache in front of Postgres. If it's down, we start
@@ -165,7 +175,7 @@ func main() {
 		logger.Error("fx rates", "err", err)
 		os.Exit(1)
 	}
-	store := wallet.NewStore(pool)
+	store := wallet.NewStore(pool).ReportsOn(reports)
 	svc := wallet.NewService(store).WithFX(wallet.FX{
 		Rates: rates, QuoteTTL: cfg.FXQuoteTTL, FeeBps: int64(cfg.FXFeeBps),
 	})
@@ -180,6 +190,8 @@ func main() {
 	handler.RegisterInternal(internal)
 	internal.HandleFunc("/", httpx.NotFound)
 	mux.Handle("/internal/", mtls.Allow("ops")(httpx.Routes(internal)))
+	// Go's profiler, for our ops tools: over mTLS, on the internal port.
+	mux.Handle("/internal/debug/", mtls.Allow("ops")(debug.Handler()))
 	mux.HandleFunc("/", httpx.NotFound)
 
 	// The same service, over gRPC, for our other services. Every RPC needs an
@@ -307,6 +319,7 @@ func main() {
 	// Close the connections last: requests that were still finishing needed them.
 	nc.Close()
 	pool.Close()
+	reports.Close()
 	rdb.Close()
 	logger.Info("nats, database pool and redis client closed")
 	// Last, the spans still waiting in the batch, from everything that stopped.

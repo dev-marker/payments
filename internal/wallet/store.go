@@ -46,20 +46,28 @@ var ErrAccountExists = fmt.Errorf("%w: account already exists", apperr.ErrConfli
 // Store is the wallet's data access layer, often called a repository. It wraps
 // the sqlc queries, and owns database transactions.
 type Store struct {
-	pool *pgxpool.Pool
-	q    *walletdb.Queries
-	tx   pgx.Tx // set by WithTx
+	pool    *pgxpool.Pool
+	reports *pgxpool.Pool // long reads: statements, trial balances, reconciliations
+	q       *walletdb.Queries
+	tx      pgx.Tx // set by WithTx
 }
 
 // NewStore returns a Store that runs its queries on pool.
 func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool, q: walletdb.New(pool)}
+	return &Store{pool: pool, reports: pool, q: walletdb.New(pool)}
+}
+
+// ReportsOn gives s's long reads a pool of their own: a bulkhead. However
+// many of them run at once, payments never wait behind them for a connection.
+func (s *Store) ReportsOn(pool *pgxpool.Pool) *Store {
+	s.reports = pool
+	return s
 }
 
 // WithTx returns a Store that runs everything inside tx, a transaction that
 // belongs to the caller: the caller commits it, and retries it.
 func (s *Store) WithTx(tx pgx.Tx) *Store {
-	return &Store{pool: s.pool, q: s.q.WithTx(tx), tx: tx}
+	return &Store{pool: s.pool, reports: s.reports, q: s.q.WithTx(tx), tx: tx}
 }
 
 // CreateAccount opens a new account. OwnerID is nil for system accounts. A

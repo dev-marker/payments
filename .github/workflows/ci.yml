@@ -114,6 +114,7 @@ jobs:
       - run: docker compose --profile app up -d --build --wait
         env:
           GATEWAY_IP_LIMIT: 1000 # k6 signs up fifty users, from one address
+          TRANSFER_RISK_MAX_COUNT: 1000 # and each sends far more than five transfers
       - run: make loadtest
       - if: failure()
         run: docker compose --profile app logs
