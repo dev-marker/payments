@@ -1,0 +1,5 @@
+apiVersion: v2
+name: payments
+description: Our six services, and everything Kubernetes needs to run them.
+type: application
+version: 0.1.0

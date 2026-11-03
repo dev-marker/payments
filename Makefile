@@ -154,3 +154,44 @@ keys:
 .PHONY: certs
 certs:
 	@go run ./cmd/devca -dir secrets/tls gateway wallet auth transfer notification ops
+
+# Kubernetes, on this machine. Create, then apply: the same line creates an
+# object the first time, and updates it every time after.
+KUBE_APPLY := --dry-run=client -o yaml | kubectl apply -f -
+
+# The cluster's Secrets, from files in secrets/ and the development passwords
+# in deploy/postgres: never in git, never in the chart.
+.PHONY: k8s-secrets
+k8s-secrets:
+	@kubectl create secret generic postgres --from-literal=password=payments $(KUBE_APPLY)
+	@kubectl create secret generic auth-private-key \
+		--from-file=private.pem=secrets/auth_ed25519.pem $(KUBE_APPLY)
+	@kubectl create secret generic auth-public-key \
+		--from-file=public.pem=secrets/auth_ed25519.pub.pem $(KUBE_APPLY)
+	@for s in gateway wallet auth transfer notification; do \
+		kubectl create secret generic $$s-tls --from-file=secrets/tls/$$s $(KUBE_APPLY); \
+	done
+	@for s in wallet auth transfer notification webhook; do \
+		kubectl create secret generic $$s-db \
+			--from-literal=url=postgres://$${s}_app:$${s}_app@postgres:5432/$$s?sslmode=disable \
+			--from-literal=owner-url=postgres://$${s}_owner:$${s}_owner@postgres:5432/$$s?sslmode=disable \
+			$(KUBE_APPLY); \
+	done
+
+# An image's tag says what's in it: never latest. kind loads our images
+# straight into its nodes, so there's no registry to push them to.
+TAG ?= $(shell git describe --always --dirty)
+SERVICES := gateway wallet auth transfer notification webhook
+
+.PHONY: images deploy
+images:
+	@for s in $(SERVICES); do \
+		docker build -q --build-arg SERVICE=$$s --build-arg VERSION=$(TAG) -t payments/$$s:$(TAG) . \
+			|| exit 1; \
+	done
+	@kind load docker-image --name payments $(SERVICES:%=payments/%:$(TAG))
+
+# Our chart, at TAG: installed the first time, upgraded every time after.
+deploy:
+	@helm upgrade --install payments deploy/helm/payments \
+		-f deploy/helm/payments/values-kind.yaml --set image.tag=$(TAG) --wait --timeout 5m

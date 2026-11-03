@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -36,6 +37,14 @@ func NewServer(
 		grpc.Creds(creds),
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.ChainUnaryInterceptor(chain...),
+		// A client keeps its connections for as long as it can, and nothing
+		// makes it look for new servers until one closes. Closing each after
+		// thirty seconds or so gets new replicas their share of calls, and
+		// the grace lets calls in flight finish.
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionAge:      30 * time.Second,
+			MaxConnectionAgeGrace: 10 * time.Second,
+		}),
 	)
 }
 

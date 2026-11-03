@@ -1,0 +1,105 @@
+# What's the same in every environment. Each one has a file of its own, like
+# values-kind.yaml, with only what's different there.
+image:
+  repository: payments
+  tag: ""  # the version to run: required, and never latest
+  pullPolicy: IfNotPresent
+
+# Every service's environment. A service's own env wins.
+env:
+  APP_ENV: production
+  LOG_FORMAT: json
+
+# How long a stopping pod keeps serving after its readiness fails: enough for
+# every node to stop sending it new requests.
+drainDelay: 5s
+
+# Each service: its ports, by name, and the one its probes are on, its
+# Secrets, mounted as files under /run/secrets, and its database's Secret.
+services:
+  gateway:
+    replicas: 2
+    ports: {http: 8080, metrics: 9080, internal: 9088}
+    probePort: metrics
+    public: {type: LoadBalancer}
+    files: {tls: gateway-tls, auth: auth-public-key}
+    env:
+      GATEWAY_WALLET_ADDR: dns:///wallet-grpc:9081
+      GATEWAY_WALLET_URL: http://wallet:8081
+      GATEWAY_AUTH_URL: http://auth:8082
+      GATEWAY_TRANSFER_URL: http://transfer:8083
+      GATEWAY_WEBHOOK_URL: http://webhook:8085
+      GATEWAY_REDIS_URL: redis://redis:6379/0
+      GATEWAY_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth/public.pem
+      GATEWAY_TLS_DIR: /run/secrets/tls
+    resources:
+      requests: {cpu: 25m, memory: 32Mi}
+      limits: {memory: 256Mi}
+
+  wallet:
+    replicas: 2
+    autoscaling: {min: 2, max: 4, cpu: 70}
+    ports: {http: 8081, grpc: 9081, internal: 9091}
+    database: wallet-db
+    files: {tls: wallet-tls, auth: auth-public-key}
+    env:
+      WALLET_REDIS_URL: redis://redis:6379/0
+      WALLET_NATS_URL: nats://nats:4222
+      WALLET_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth/public.pem
+      WALLET_TLS_DIR: /run/secrets/tls
+    resources:
+      requests: {cpu: 50m, memory: 32Mi}
+      limits: {memory: 256Mi}
+
+  auth:
+    replicas: 2
+    ports: {http: 8082, internal: 9082}
+    database: auth-db
+    files: {tls: auth-tls, auth: auth-private-key}
+    env:
+      AUTH_PRIVATE_KEY_FILE: /run/secrets/auth/private.pem
+      AUTH_TLS_DIR: /run/secrets/tls
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {memory: 256Mi}
+
+  transfer:
+    replicas: 2
+    ports: {http: 8083, internal: 9083}
+    database: transfer-db
+    files: {tls: transfer-tls, auth: auth-public-key}
+    env:
+      TRANSFER_WALLET_ADDR: dns:///wallet-grpc:9081
+      TRANSFER_REDIS_URL: redis://redis:6379/0
+      TRANSFER_NATS_URL: nats://nats:4222
+      TRANSFER_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth/public.pem
+      TRANSFER_TLS_DIR: /run/secrets/tls
+    resources:
+      requests: {cpu: 50m, memory: 32Mi}
+      limits: {memory: 256Mi}
+
+  notification:
+    replicas: 2
+    ports: {http: 8084}
+    database: notification-db
+    files: {tls: notification-tls}
+    env:
+      NOTIFICATION_NATS_URL: nats://nats:4222
+      NOTIFICATION_AUTH_URL: https://auth:9082
+      NOTIFICATION_SMTP_ADDR: mailpit:1025
+      NOTIFICATION_TLS_DIR: /run/secrets/tls
+    resources:
+      requests: {cpu: 25m, memory: 32Mi}
+      limits: {memory: 256Mi}
+
+  webhook:
+    replicas: 2
+    ports: {http: 8085}
+    database: webhook-db
+    files: {auth: auth-public-key}
+    env:
+      WEBHOOK_NATS_URL: nats://nats:4222
+      WEBHOOK_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth/public.pem
+    resources:
+      requests: {cpu: 25m, memory: 32Mi}
+      limits: {memory: 256Mi}

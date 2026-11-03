@@ -37,6 +37,9 @@ const ackWait = 30 * time.Second
 func (n *Notifier) Consume(
 	ctx context.Context, js jetstream.JetStream, stream string, subjects ...string,
 ) (jetstream.ConsumeContext, error) {
+	if err := natsx.WaitForStream(ctx, js, stream); err != nil {
+		return nil, err
+	}
 	consumer, err := js.CreateOrUpdateConsumer(ctx, stream, jetstream.ConsumerConfig{
 		Durable:        "notification",
 		Description:    "tells users what happened to their money",

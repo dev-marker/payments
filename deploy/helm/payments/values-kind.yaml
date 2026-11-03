@@ -1,0 +1,13 @@
+# This laptop: a kind cluster, with the images we loaded into it.
+env:
+  APP_ENV: development # the built-in FX rates, which production refuses
+
+services:
+  gateway:
+    # cluster.yaml maps this NodePort to localhost:8080.
+    public: {type: NodePort, nodePort: 30080}
+    env:
+      GATEWAY_IP_LIMIT: 1000 # k6 signs up its users from one address
+  transfer:
+    env:
+      TRANSFER_RISK_MAX_COUNT: 1000 # and each one sends far more than five

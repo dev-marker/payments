@@ -1,0 +1,16 @@
+# A Kubernetes cluster on this machine: every node is a Docker container.
+#   kind create cluster --config deploy/kind/cluster.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: payments
+nodes:
+  - role: control-plane
+    # The gateway's NodePort, on this machine's port 8080, for this machine
+    # only. In a cloud, a load balancer does this job.
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8080
+        listenAddress: 127.0.0.1
+  # Two workers, so replicas can spread out, and a node can go away.
+  - role: worker
+  - role: worker

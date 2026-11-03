@@ -47,6 +47,9 @@ func NewFanOut(q *webhookdb.Queries, wake func(), logger *slog.Logger) *FanOut {
 
 // Consume starts the durable consumer on the TRANSFER stream.
 func (f *FanOut) Consume(ctx context.Context, js jetstream.JetStream) (jetstream.ConsumeContext, error) {
+	if err := natsx.WaitForStream(ctx, js, transferevents.Stream); err != nil {
+		return nil, err
+	}
 	consumer, err := js.CreateOrUpdateConsumer(ctx, transferevents.Stream, jetstream.ConsumerConfig{
 		Durable:        "webhook",
 		Description:    "turns transfer events into webhook deliveries",

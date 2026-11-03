@@ -1,0 +1,104 @@
+{{- range $name, $svc := .Values.services }}
+{{- $ctx := dict "root" $ "name" $name "svc" $svc }}
+{{- $tag := required "set image.tag" $.Values.image.tag }}
+{{- $image := printf "%s/%s:%s" $.Values.image.repository $name $tag }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: {{- include "payments.labels" $ctx | nindent 4 }}
+spec:
+  {{- if not $svc.autoscaling }}
+  replicas: {{ $svc.replicas }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "payments.selector" $ctx | nindent 6 }}
+  # One new pod at a time, and an old one goes only once a new one is ready.
+  strategy:
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata:
+      labels: {{- include "payments.labels" $ctx | nindent 8 }}
+      annotations:
+        # A changed ConfigMap alone restarts nothing: this changes with it.
+        checksum/env: {{ include "payments.env" $ctx | sha256sum }}
+    spec:
+      # Drain delay, then ten seconds to finish: well within thirty.
+      terminationGracePeriodSeconds: 30
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      # Replicas on different nodes, where there's room.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {{- include "payments.selector" $ctx | nindent 14 }}
+      {{- if $svc.database }}
+      # The migrations, as the owner, before the new version starts.
+      initContainers:
+        - name: migrate
+          image: {{ $image }}
+          args: ["-migrate"]
+          envFrom: [{configMapRef: {name: {{ $name }}}}]
+          env:
+            - name: {{ upper $name }}_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ $svc.database }}, key: owner-url}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      {{- end }}
+      containers:
+        - name: {{ $name }}
+          image: {{ $image }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            {{- range $port, $number := $svc.ports }}
+            - {name: {{ $port }}, containerPort: {{ $number }}}
+            {{- end }}
+          envFrom: [{configMapRef: {name: {{ $name }}}}]
+          env:
+            {{- if $svc.database }}
+            - name: {{ upper $name }}_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ $svc.database }}, key: url}}
+            {{- end }}
+            # Go's garbage collector works harder near the limit, before the
+            # kernel kills us for crossing it.
+            - name: GOMEMLIMIT
+              valueFrom: {resourceFieldRef: {resource: limits.memory}}
+          # Episode 16's probes. Startup: a minute to start, waiting for others.
+          # Liveness: restart a stuck process. Readiness: send it traffic only
+          # while it can do its job.
+          startupProbe:
+            httpGet: {path: /healthz, port: {{ $svc.probePort | default "http" }}}
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /healthz, port: {{ $svc.probePort | default "http" }}}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /readyz, port: {{ $svc.probePort | default "http" }}}
+            periodSeconds: 5
+          resources: {{- toYaml $svc.resources | nindent 12 }}
+          # Nothing to write, nothing to escalate to: our binary needs neither.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            {{- range $dir, $secret := $svc.files }}
+            - {name: {{ $dir }}, mountPath: /run/secrets/{{ $dir }}, readOnly: true}
+            {{- end }}
+      volumes:
+        {{- range $dir, $secret := $svc.files }}
+        - name: {{ $dir }}
+          secret: {secretName: {{ $secret }}, defaultMode: 0440}
+        {{- end }}
+{{- end }}

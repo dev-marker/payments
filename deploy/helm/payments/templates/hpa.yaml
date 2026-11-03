@@ -1,0 +1,21 @@
+{{- range $name, $svc := .Values.services }}
+{{- with $svc.autoscaling }}
+---
+# More replicas when they're busy, fewer when they're not: by CPU, as a share
+# of what each pod requested.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+  labels: {{- include "payments.labels" (dict "root" $ "name" $name) | nindent 4 }}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: {{ $name }}}
+  minReplicas: {{ .min }}
+  maxReplicas: {{ .max }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: {{ .cpu }}}
+{{- end }}
+{{- end }}

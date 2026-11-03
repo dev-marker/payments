@@ -1,0 +1,10 @@
+{{- range $name, $svc := .Values.services }}
+{{- $ctx := dict "root" $ "name" $name "svc" $svc }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels: {{- include "payments.labels" $ctx | nindent 4 }}
+data: {{- include "payments.env" $ctx | nindent 2 }}
+{{- end }}

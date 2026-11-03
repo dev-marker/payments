@@ -1,0 +1,149 @@
+# What our services need, for a laptop: Postgres, Redis, NATS and Mailpit,
+# one of each. In production: a managed database, or an operator.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          # Room for every pool, plus the extra pods of a rolling update.
+          args: ["-c", "max_connections=200", "-c", "shared_preload_libraries=pg_stat_statements"]
+          env:
+            - {name: POSTGRES_USER, value: payments}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: postgres, key: password}}
+          ports: [{containerPort: 5432}]
+          readinessProbe:
+            exec: {command: ["pg_isready", "-U", "payments", "-h", "127.0.0.1"]}
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d}
+      volumes:
+        # Our roles and databases: deploy/postgres, as a ConfigMap.
+        - name: init
+          configMap: {name: postgres-init}
+  # A disk of its own, that outlives the pod.
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 2Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: {app: postgres}
+  ports: [{port: 5432}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      containers:
+        - name: redis
+          image: redis:8-alpine
+          ports: [{containerPort: 6379}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: {app: redis}
+  ports: [{port: 6379}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nats
+spec:
+  serviceName: nats
+  replicas: 1
+  selector:
+    matchLabels: {app: nats}
+  template:
+    metadata:
+      labels: {app: nats}
+    spec:
+      containers:
+        - name: nats
+          image: nats:2.11-alpine
+          args: ["-js", "-sd", "/data", "-m", "8222"]
+          ports: [{containerPort: 4222}, {containerPort: 8222}]
+          readinessProbe:
+            httpGet: {path: "/healthz?js-enabled-only=true", port: 8222}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats
+spec:
+  selector: {app: nats}
+  ports: [{port: 4222}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+spec:
+  selector:
+    matchLabels: {app: mailpit}
+  template:
+    metadata:
+      labels: {app: mailpit}
+    spec:
+      containers:
+        - name: mailpit
+          image: axllent/mailpit:v1.27
+          ports: [{containerPort: 1025}, {containerPort: 8025}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+spec:
+  selector: {app: mailpit}
+  ports: [{name: smtp, port: 1025}, {name: web, port: 8025}]
+---
+# Postgres, Redis and NATS take connections only from our services' pods:
+# anything else in the cluster is turned away by the network itself.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: infra
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app, operator: In, values: [postgres, redis, nats]}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/part-of: payments}

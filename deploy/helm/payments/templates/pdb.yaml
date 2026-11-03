@@ -1,0 +1,15 @@
+{{- range $name, $svc := .Values.services }}
+{{- $ctx := dict "root" $ "name" $name "svc" $svc }}
+---
+# Voluntary disruptions, like draining a node for an upgrade, take one pod at a
+# time: the others keep serving.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  labels: {{- include "payments.labels" $ctx | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: {{- include "payments.selector" $ctx | nindent 6 }}
+{{- end }}

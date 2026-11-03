@@ -1,0 +1,50 @@
+{{- range $name, $svc := .Values.services }}
+{{- $ctx := dict "root" $ "name" $name "svc" $svc }}
+---
+# A stable name and address for the service's pods, inside the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "payments.labels" $ctx | nindent 4 }}
+spec:
+  selector: {{- include "payments.selector" $ctx | nindent 4 }}
+  ports:
+    {{- range $port, $number := $svc.ports }}
+    - {name: {{ $port }}, port: {{ $number }}, targetPort: {{ $port }}}
+    {{- end }}
+{{- if $svc.ports.grpc }}
+---
+# Headless: DNS answers with every ready pod's address, so gRPC clients can
+# spread their calls over all of them themselves.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-grpc
+  labels: {{- include "payments.labels" $ctx | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{- include "payments.selector" $ctx | nindent 4 }}
+  ports:
+    - {name: grpc, port: {{ $svc.ports.grpc }}, targetPort: grpc}
+{{- end }}
+{{- with $svc.public }}
+---
+# The way in from outside: one port, and nothing else.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-public
+  labels: {{- include "payments.labels" $ctx | nindent 4 }}
+spec:
+  type: {{ .type }}
+  selector: {{- include "payments.selector" $ctx | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      {{- with .nodePort }}
+      nodePort: {{ . }}
+      {{- end }}
+{{- end }}
+{{- end }}

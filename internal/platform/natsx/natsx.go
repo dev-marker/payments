@@ -3,6 +3,7 @@ package natsx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -70,6 +71,24 @@ func EnsureStream(ctx context.Context, js jetstream.JetStream, cfg jetstream.Str
 	slog.InfoContext(ctx, "stream ready", "stream", cfg.Name, "subjects", cfg.Subjects,
 		"messages", stream.CachedInfo().State.Msgs)
 	return nil
+}
+
+// WaitForStream waits until the stream called name exists. The service that
+// publishes to it creates it when it starts, and in Kubernetes, services
+// start in no particular order. It gives up when ctx is done.
+func WaitForStream(ctx context.Context, js jetstream.JetStream, name string) error {
+	for {
+		_, err := js.Stream(ctx, name)
+		if !errors.Is(err, jetstream.ErrStreamNotFound) {
+			return err
+		}
+		slog.InfoContext(ctx, "waiting for stream", "stream", name)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 // HeaderCarrier lets OpenTelemetry read and write a message's headers: Get
