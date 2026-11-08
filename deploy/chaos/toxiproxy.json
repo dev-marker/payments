@@ -1,0 +1,4 @@
+[
+  {"name": "transfer", "listen": "0.0.0.0:18083", "upstream": "transfer:8083", "enabled": true},
+  {"name": "wallet", "listen": "0.0.0.0:19081", "upstream": "wallet:9081", "enabled": true}
+]

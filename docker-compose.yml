@@ -169,7 +169,7 @@ services:
     environment: &transfer-env
       <<: *env
       TRANSFER_DATABASE_URL: postgres://transfer_app:transfer_app@postgres:5432/transfer?sslmode=disable
-      TRANSFER_WALLET_ADDR: dns:///wallet:9081
+      TRANSFER_WALLET_ADDR: ${TRANSFER_WALLET_ADDR:-dns:///wallet:9081} # make chaos-up: through Toxiproxy
       TRANSFER_NATS_URL: nats://nats:4222
       TRANSFER_REDIS_URL: redis://redis:6379/0
       TRANSFER_AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
@@ -224,7 +224,7 @@ services:
       <<: *env
       GATEWAY_WALLET_ADDR: dns:///wallet:9081
       GATEWAY_AUTH_URL: http://auth:8082
-      GATEWAY_TRANSFER_URL: http://transfer:8083
+      GATEWAY_TRANSFER_URL: ${GATEWAY_TRANSFER_URL:-http://transfer:8083} # make chaos-up: through Toxiproxy
       GATEWAY_WEBHOOK_URL: http://webhook:8085
       GATEWAY_WALLET_URL: http://wallet:8081
       GATEWAY_REDIS_URL: redis://redis:6379/0
@@ -259,6 +259,18 @@ services:
     environment:
       <<: *webhook-env
       WEBHOOK_DATABASE_URL: postgres://webhook_owner:webhook_owner@postgres:5432/webhook?sslmode=disable
+
+  # Network faults, on demand, for chaos experiments: a TCP proxy that we can
+  # slow down or cut, through its API on port 8474. make chaos-up puts it in
+  # front of the transfer service, and of the wallet's gRPC port.
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    profiles: [chaos]
+    command: ["-host=0.0.0.0", "-config=/etc/toxiproxy.json"]
+    volumes:
+      - ./deploy/chaos/toxiproxy.json:/etc/toxiproxy.json:ro
+    ports:
+      - "8474:8474"
 
 volumes:
   pgdata:

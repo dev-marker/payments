@@ -195,3 +195,12 @@ images:
 deploy:
 	@helm upgrade --install payments deploy/helm/payments \
 		-f deploy/helm/payments/values-kind.yaml --set image.tag=$(TAG) --wait --timeout 5m
+
+# Chaos experiments: the whole system, set up for a load test, with Toxiproxy
+# in two places: between the gateway and the transfer service, and between
+# the transfer service and the wallet. Then: go run ./cmd/chaos
+.PHONY: chaos-up
+chaos-up:
+	@GATEWAY_IP_LIMIT=1000 TRANSFER_RISK_MAX_COUNT=1000 \
+		GATEWAY_TRANSFER_URL=http://toxiproxy:18083 TRANSFER_WALLET_ADDR=dns:///toxiproxy:19081 \
+		docker compose --profile app --profile chaos up -d --build --wait $(SERVICES) toxiproxy
